@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#0a7b12">
-<title>車牌 OCR v6.1（全自動尋牌＋批次）</title>
+<title>車牌 OCR v6.2（全自動＋嚴格輸出）</title>
 <style>
   :root{--border:#e4e4e4;--muted:#666}
   body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial;margin:14px;max-width:920px}
@@ -31,10 +31,11 @@
   .chip.sel{background:#d6f8e6;border-color:#9be4c1}
   .small{font-size:0.86rem}
   textarea{width:100%;min-height:90px;padding:8px;border:1px solid #ddd;border-radius:8px}
+  .tog{display:flex;gap:8px;align-items:center;margin-top:6px;font-size:.92rem}
 </style>
 </head>
 <body>
-  <h1>車牌 OCR v6.1（全自動尋牌＋批次）</h1>
+  <h1>車牌 OCR v6.2（全自動＋嚴格輸出）</h1>
 
   <div class="card">
     <div class="flex">
@@ -53,6 +54,10 @@
         <textarea id="cpEdit"></textarea>
         <div class="controls"><button id="cpSave">💾 儲存清單</button><button id="cpReset">↩️ 用預設</button></div>
       </details>
+    </div>
+    <div class="tog">
+      <input type="checkbox" id="spaceToggle">
+      <label for="spaceToggle">輸出「字母數字之間加空格」（默認關閉，會輸出如 <b>WJ7571</b>）</label>
     </div>
     <div class="list" id="listBox"></div>
   </div>
@@ -74,19 +79,18 @@
     <input id="inCamera" type="file" accept="image/*" capture="environment" style="display:none" />
     <input id="inAlbum" type="file" accept="image/*" style="display:none" />
     <input id="inBatch" type="file" accept="image/*" multiple style="display:none" />
-    <div class="muted">貼士：全自動模式會在不同高度/比例嘗試多個候選框，挑選最似車牌的一個去 OCR。</div>
+    <div class="muted">全自動會嘗試多個候選框；輸出只會保留「香港車牌格式」命中結果，其餘不入清單。</div>
 
-    <label>原圖 / 裁切（單張模式）</label>
+    <label>原圖 / 裁切（單張）</label>
     <canvas id="canvas"></canvas>
 
     <label>處理後（Canvas 預覽）</label>
     <canvas id="proc"></canvas>
 
     <div class="controls">
-      <button id="autocrop">自動框選（置中）</button>
-      <button id="autoFind">🔎 全自動尋牌＋辨識＋入清單</button>
-      <button id="enhance">增強並辨識＋入清單</button>
-      <button id="raw">直接辨識＋入清單</button>
+      <button id="autoFind">🔎 全自動尋牌＋入清單</button>
+      <button id="enhance">增強並辨識＋入清單（手動框）</button>
+      <button id="raw">直接辨識＋入清單（手動框）</button>
       <button id="copy">複製單一結果</button>
       <button id="reset">重設畫面</button>
     </div>
@@ -96,363 +100,90 @@
   </div>
 
 <script>
-// ====== 工具：時間 ======
 function pad(n){return n<10?('0'+n):n}
-function nowTitleWith(name){
-  const d=new Date();
-  return `${pad(d.getDate())}/${pad(d.getMonth()+1)} ${pad(d.getHours())}${pad(d.getMinutes())} ${name||''}`.trim();
-}
+function nowTitleWith(name){ const d=new Date(); return `${pad(d.getDate())}/${pad(d.getMonth()+1)} ${pad(d.getHours())}${pad(d.getMinutes())} ${name||''}`.trim(); }
 
-// ====== 車場清單（可編輯＋本地儲存） ======
-const DEFAULT_CP = ['牛頭角','新蒲崗','觀塘','葵芳','荃灣','旺角','油麻地','九龍灣','尖沙咀','中環','將軍澳'];
-const LS_CP='plateocr_v61_cp';
-let CP = JSON.parse(localStorage.getItem(LS_CP) || 'null') || DEFAULT_CP.slice();
-
-const chipsDom = document.getElementById('chips');
-const cpEdit = document.getElementById('cpEdit');
-function renderChips(){
-  chipsDom.innerHTML='';
-  CP.forEach(name=>{
-    const b=document.createElement('button');
-    b.className='chip';
-    b.textContent=name;
-    b.onclick=()=>{
-      document.getElementById('title').value = nowTitleWith(name);
-      localStorage.setItem('plateocr_v61_title', document.getElementById('title').value);
-      renderList();
-      [...chipsDom.children].forEach(x=>x.classList.remove('sel'));
-      b.classList.add('sel');
-    };
-    chipsDom.appendChild(b);
-  });
-  cpEdit.value = CP.join('\n');
-}
+const DEFAULT_CP=['牛頭角','新蒲崗','觀塘','葵芳','荃灣','旺角','油麻地','九龍灣','尖沙咀','中環','將軍澳'];
+const LS_CP='plateocr_v62_cp';
+let CP=JSON.parse(localStorage.getItem(LS_CP)||'null')||DEFAULT_CP.slice();
+const chipsDom=document.getElementById('chips'),cpEdit=document.getElementById('cpEdit');
+function renderChips(){ chipsDom.innerHTML=''; CP.forEach(name=>{ const b=document.createElement('button'); b.className='chip'; b.textContent=name; b.onclick=()=>{ document.getElementById('title').value=nowTitleWith(name); localStorage.setItem('plateocr_v62_title', document.getElementById('title').value); renderList(); [...chipsDom.children].forEach(x=>x.classList.remove('sel')); b.classList.add('sel'); }; chipsDom.appendChild(b); }); cpEdit.value=CP.join('\n'); }
 renderChips();
-document.getElementById('cpSave').onclick=()=>{
-  const lines = cpEdit.value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
-  CP = lines.length? lines : DEFAULT_CP.slice();
-  localStorage.setItem(LS_CP, JSON.stringify(CP));
-  renderChips();
-};
-document.getElementById('cpReset').onclick=()=>{
-  CP = DEFAULT_CP.slice();
-  localStorage.setItem(LS_CP, JSON.stringify(CP));
-  renderChips();
-};
+document.getElementById('cpSave').onclick=()=>{ const lines=cpEdit.value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean); CP=lines.length?lines:DEFAULT_CP.slice(); localStorage.setItem(LS_CP,JSON.stringify(CP)); renderChips(); };
+document.getElementById('cpReset').onclick=()=>{ CP=DEFAULT_CP.slice(); localStorage.setItem(LS_CP,JSON.stringify(CP)); renderChips(); };
 
-// ====== 清單持久化 ======
-const listBox=document.getElementById('listBox');
-const LS_KEY='plateocr_v61_list';
-const TITLE_KEY='plateocr_v61_title';
+const listBox=document.getElementById('listBox'); const LS_KEY='plateocr_v62_list'; const TITLE_KEY='plateocr_v62_title';
 let list=JSON.parse(localStorage.getItem(LS_KEY)||'[]');
-function renderList(){
-  const lines=list.map(x=>x.text).join('\n');
-  listBox.textContent = (document.getElementById('title').value||'(未命名)') + '\n' + (lines||'(尚未新增)');
-}
-function addToList(plate){
-  if(!plate) return;
-  list.push({text:plate,ts:Date.now()});
-  localStorage.setItem(LS_KEY, JSON.stringify(list));
-  renderList();
-}
-function clearList(){
-  list=[]; localStorage.removeItem(LS_KEY); renderList();
-}
+function renderList(){ const lines=list.map(x=>x.text).join('\n'); listBox.textContent=(document.getElementById('title').value||'(未命名)') + '\n' + (lines||'(尚未新增)'); }
+function addToList(plate){ if(!plate) return; list.push({text:plate,ts:Date.now()}); localStorage.setItem(LS_KEY,JSON.stringify(list)); renderList(); }
+function clearList(){ list=[]; localStorage.removeItem(LS_KEY); renderList(); }
 
-// ====== 初始化標題 ======
-(function initTitle(){
-  const t = localStorage.getItem(TITLE_KEY) || nowTitleWith('');
-  const titleEl=document.getElementById('title');
-  titleEl.value = t;
-  titleEl.addEventListener('input', ()=>localStorage.setItem(TITLE_KEY, titleEl.value));
-  renderList();
-})();
-document.getElementById('btnNow').onclick=()=>{
-  const titleEl=document.getElementById('title');
-  titleEl.value = nowTitleWith('');
-  localStorage.setItem(TITLE_KEY,titleEl.value);
-  renderList();
-};
-document.getElementById('btnClear').onclick = ()=>{ if(confirm('確定清空清單？')) clearList(); };
-document.getElementById('btnCopyAll').onclick = async ()=>{
-  const text=listBox.textContent; try{ await navigator.clipboard.writeText(text); alert('已複製整份清單'); }catch(e){ alert('複製失敗'); }
-};
+(function(){ const t=localStorage.getItem(TITLE_KEY)||nowTitleWith(''); const el=document.getElementById('title'); el.value=t; el.addEventListener('input',()=>localStorage.setItem(TITLE_KEY,el.value)); renderList(); })();
+document.getElementById('btnNow').onclick=()=>{ const el=document.getElementById('title'); el.value=nowTitleWith(''); localStorage.setItem(TITLE_KEY,el.value); renderList(); };
+document.getElementById('btnClear').onclick=()=>{ if(confirm('確定清空清單？')) clearList(); };
+document.getElementById('btnCopyAll').onclick=async()=>{ const text=listBox.textContent; try{ await navigator.clipboard.writeText(text); alert('已複製整份清單'); }catch(e){ alert('複製失敗'); } };
 
-// ====== 既有 OCR（CDN）======
-const inCamera=document.getElementById('inCamera');
-const inAlbum=document.getElementById('inAlbum');
-const inBatch=document.getElementById('inBatch');
-const btnCamera=document.getElementById('btnCamera');
-const btnAlbum=document.getElementById('btnAlbum');
-const btnBatch=document.getElementById('btnBatch');
-const canvas=document.getElementById('canvas'); const ctx=canvas.getContext('2d');
-const proc=document.getElementById('proc'); const pctx=proc.getContext('2d');
-const bar=document.getElementById('bar'); const bartxt=document.getElementById('bartxt');
-const statusEl=document.getElementById('status'); const outEl=document.getElementById('out'); const logEl=document.getElementById('log');
-function log(s){ logEl.textContent += s + '\\n'; }
+const inCamera=document.getElementById('inCamera'), inAlbum=document.getElementById('inAlbum'), inBatch=document.getElementById('inBatch');
+document.getElementById('btnCamera').onclick=()=>inCamera.click();
+document.getElementById('btnAlbum').onclick=()=>inAlbum.click();
+document.getElementById('btnBatch').onclick=()=>inBatch.click();
 
-let img=new Image(), imgW=0,imgH=0, scale=1;
-let crop={x:0,y:0,w:0,h:0,drag:false};
+const canvas=document.getElementById('canvas'), ctx=canvas.getContext('2d'); const proc=document.getElementById('proc'), pctx=proc.getContext('2d');
+const bar=document.getElementById('bar'), bartxt=document.getElementById('bartxt'); const statusEl=document.getElementById('status'); const outEl=document.getElementById('out'); const logEl=document.getElementById('log'); function log(s){ logEl.textContent+=s+'\n'; }
+let img=new Image(), imgW=0,imgH=0, scale=1; let crop={x:0,y:0,w:0,h:0,drag:false};
+[inCamera,inAlbum].forEach(inp=>inp.addEventListener('change',e=>{ const f=e.target.files[0]; if(!f)return; const url=URL.createObjectURL(f); img=new Image(); img.onload=()=>{ imgW=img.naturalWidth; imgH=img.naturalHeight; scale=fit(canvas,imgW,imgH); crop.w=canvas.width*0.78; crop.h=canvas.height*0.22; crop.x=(canvas.width-crop.w)/2; crop.y=(canvas.height-crop.h)/2; draw(); URL.revokeObjectURL(url); outEl.textContent=''; statusEl.textContent='影像已載入：可用「全自動尋牌」'; pctx.clearRect(0,0,proc.width,proc.height); }; img.src=url; }));
+function fit(el,w,h){ const maxW=Math.min(window.innerWidth-40,820); const s=Math.min(1,maxW/w); el.width=Math.round(w*s); el.height=Math.round(h*s); return s; }
+function draw(){ ctx.clearRect(0,0,canvas.width,canvas.height); ctx.drawImage(img,0,0,imgW*scale,imgH*scale); if(crop.w&&crop.h){ ctx.strokeStyle='lime'; ctx.lineWidth=2; ctx.strokeRect(crop.x,crop.y,crop.w,crop.h); } }
 
-btnCamera.onclick=()=>inCamera.click();
-btnAlbum.onclick=()=>inAlbum.click();
-btnBatch.onclick=()=>inBatch.click();
+function getCropCanvasFrom(img, rect){ const tmp=document.createElement('canvas'); tmp.width=rect.w; tmp.height=rect.h; tmp.getContext('2d').drawImage(img,rect.x,rect.y,rect.w,rect.h,0,0,rect.w,rect.h); return tmp; }
+function generateCandidates(img){ const W=img.naturalWidth, H=img.naturalHeight, cand=[]; const ar=[4.5,4.0,5.0], hf=[0.16,0.2,0.24], rows=[0.38,0.48,0.58]; for(const a of ar){ for(const h of hf){ const hh=Math.round(H*h), ww=Math.round(hh*a); for(const cy of rows){ const y=Math.max(0,Math.min(H-hh,Math.round(H*cy-hh/2))); const x=Math.max(0,Math.min(W-ww,Math.round(W*0.5-ww/2))); cand.push({x,y,w:ww,h:hh}); } } } const shift=[-0.18,0,0.18]; const baseH=Math.round(H*0.20), baseW=Math.round(baseH*4.5); for(const sx of shift){ const w=baseW,h=baseH; const x=Math.max(0,Math.min(W-w,Math.round(W*(0.5+sx)-w/2))); const y=Math.max(0,Math.min(H-h,Math.round(H*0.5-h/2))); cand.push({x,y,w,h}); } const uniq=[], seen=new Set(); for(const r of cand){ const k=[r.x,r.y,r.w,r.h].join(','); if(!seen.has(k)){ seen.add(k); uniq.push(r); } } return uniq; }
 
-[inCamera,inAlbum].forEach(inp=>{
-  inp.addEventListener('change',e=>{
-    const f=e.target.files[0]; if(!f)return;
-    const url=URL.createObjectURL(f);
-    img=new Image();
-    img.onload=()=>{
-      imgW=img.naturalWidth; imgH=img.naturalHeight;
-      scale=fit(canvas,imgW,imgH);
-      crop.w=canvas.width*0.78; crop.h=canvas.height*0.22;
-      crop.x=(canvas.width-crop.w)/2; crop.y=(canvas.height-crop.h)/2;
-      draw();
-      URL.revokeObjectURL(url);
-      outEl.textContent=''; statusEl.textContent='影像已載入（單張）：可用「🔎 全自動尋牌」直入清單';
-      pctx.clearRect(0,0,proc.width,proc.height);
-    };
-    img.src=url;
-  });
-});
+function preprocess(cnv){ const scaleUp=2.0; const out=document.createElement('canvas'); out.width=Math.round(cnv.width*scaleUp); out.height=Math.round(cnv.height*scaleUp); const octx=out.getContext('2d'); octx.imageSmoothingEnabled=true; octx.drawImage(cnv,0,0,out.width,out.height); let imgd=octx.getImageData(0,0,out.width,out.height), d=imgd.data; let mn=255,mx=0; for(let i=0;i<d.length;i+=4){ const y=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2]; d[i]=d[i+1]=d[i+2]=y; if(y<mn)mn=y; if(y>mx)mx=y; } const range=Math.max(1,mx-mn); for(let i=0;i<d.length;i+=4){ const v=(d[i]-mn)*255/range; d[i]=d[i+1]=d[i+2]=v; } const copy=new Uint8ClampedArray(d); const w=out.width,h=out.height; function px(a,x,y){ return a[(y*w+x)*4]; } for(let y=1;y<h-1;y++){ for(let x=1;x<w-1;x++){ const vals=[px(copy,x-1,y-1),px(copy,x,y-1),px(copy,x+1,y-1),px(copy,x-1,y),px(copy,x,y),px(copy,x+1,y),px(copy,x-1,y+1),px(copy,x,y+1),px(copy,x+1,y+1)]; vals.sort((a,b)=>a-b); const m=vals[4]; const idx=(y*w+x)*4; d[idx]=d[idx+1]=d[idx+2]=m; } } let sum=0; for(let i=0;i<d.length;i+=4) sum+=d[i]; const mean=sum/(d.length/4); const T=Math.max(110,Math.min(200,mean+8)); for(let i=0;i<d.length;i+=4){ const v=d[i]>T?255:0; d[i]=d[i+1]=d[i+2]=v; d[i+3]=255; } octx.putImageData(imgd,0,0); return out; }
 
-function fit(el,w,h){
-  const maxW=Math.min(window.innerWidth-40,820);
-  const s=Math.min(1,maxW/w);
-  el.width=Math.round(w*s); el.height=Math.round(h*s);
-  return s;
-}
-function draw(){
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  ctx.drawImage(img,0,0,imgW*scale,imgH*scale);
-  if(crop.w&&crop.h){
-    ctx.strokeStyle='lime';ctx.lineWidth=2;ctx.strokeRect(crop.x,crop.y,crop.w,crop.h);
-    ctx.fillStyle='rgba(0,0,0,.25)'; ctx.beginPath(); ctx.rect(0,0,canvas.width,canvas.height); ctx.rect(crop.x,crop.y,crop.w,crop.h); ctx.fill('evenodd');
-  }
-}
-canvas.addEventListener('pointerdown',ev=>{
-  const r=canvas.getBoundingClientRect(); const x=ev.clientX-r.left, y=ev.clientY-r.top;
-  if(x>crop.x&&x<crop.x+crop.w&&y>crop.y&&y<crop.y+crop.h) crop.drag=true;
-});
-window.addEventListener('pointermove',ev=>{
-  if(!crop.drag) return;
-  const r=canvas.getBoundingClientRect(); const x=ev.clientX-r.left, y=ev.clientY-r.top;
-  crop.x=Math.min(Math.max(0,x-crop.w/2),canvas.width-crop.w);
-  crop.y=Math.min(Math.max(0,y-crop.h/2),canvas.height-crop.h);
-  draw();
-});
-window.addEventListener('pointerup',()=>{ crop.drag=false; });
+function strictExtractPlate(raw){ const withSpace=document.getElementById('spaceToggle').checked; const up=(raw||'').toUpperCase(); const alnum=up.replace(/[^A-Z0-9]/g,''); const m=alnum.match(/[A-Z]{1,3}\d{1,4}/); if(m){ const plate=m[0]; return withSpace? plate.replace(/([A-Z]+)(\d+)/,'$1 $2') : plate; } return ''; }
 
-function getCropCanvasFrom(img, w, h, rect){
-  const tmp=document.createElement('canvas'); tmp.width=rect.w; tmp.height=rect.h;
-  tmp.getContext('2d').drawImage(img, rect.x, rect.y, rect.w, rect.h, 0,0,rect.w,rect.h);
-  return tmp;
-}
+async function recognizeCanvas(cnv, hint){ bar.style.width='10%'; bartxt.textContent=hint+' 10%'; const blob=await new Promise(res=>cnv.toBlob(b=>res(b),'image/png',0.92)); try{ const {data}=await Tesseract.recognize(blob,'eng',{ workerPath:'https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/worker.min.js', corePath:'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.0.0/tesseract-core.wasm.js', langPath:'https://tessdata.projectnaptha.com/4.0.0', tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ', preserve_interword_spaces:'1', tessedit_pageseg_mode:'7', logger:m=>{ if(m.progress){ const p=Math.max(10,Math.round(m.progress*100)); bar.style.width=p+'%'; bartxt.textContent=(m.status||hint)+' '+p+'%'; } log(JSON.stringify(m)); } }); bar.style.width='100%'; bartxt.textContent='完成 100%'; return strictExtractPlate(data.text||''); }catch(err){ bartxt.textContent='錯誤：'+err.message; bar.style.width='0%'; log('ERROR: '+(err.stack||err)); return ''; } }
 
-function generateCandidates(img){
-  // 依香港車牌比例（橫向 4:1 ~ 5:1；縱向 1.5:1 ~ 2:1）產生多個候選框
-  const W=img.naturalWidth, H=img.naturalHeight;
-  const cand=[];
-  const arList=[4.5,4.0,5.0]; // 橫向比例
-  const heightFrac=[0.16,0.2,0.24]; // 站在畫面高度的比例
-  const rows=[0.38,0.48,0.58]; // 中線位置（比例）
-  for(const ar of arList){
-    for(const hf of heightFrac){
-      const h=Math.round(H*hf), w=Math.round(h*ar);
-      for(const cy of rows){
-        const y=Math.max(0, Math.min(H-h, Math.round(H*cy - h/2)));
-        const x=Math.max(0, Math.min(W-w, Math.round(W*0.5 - w/2)));
-        cand.push({x,y,w,h});
-      }
-    }
-  }
-  // 加入左右偏移版本
-  const shift=[-0.18,0,0.18];
-  const baseH=Math.round(H*0.20), baseW=Math.round(baseH*4.5);
-  for(const sx of shift){
-    const w=baseW, h=baseH;
-    const x=Math.max(0, Math.min(W-w, Math.round(W*(0.5+sx) - w/2)));
-    const y=Math.max(0, Math.min(H-h, Math.round(H*0.5 - h/2)));
-    cand.push({x,y,w,h});
-  }
-  // 去重
-  const uniq=[], seen=new Set();
-  for(const r of cand){
-    const k=[r.x,r.y,r.w,r.h].join(',');
-    if(!seen.has(k)){ seen.add(k); uniq.push(r); }
-  }
-  return uniq;
-}
-
-function preprocess(cnv){
-  const scaleUp=2.0;
-  const out=document.createElement('canvas'); out.width=Math.round(cnv.width*scaleUp); out.height=Math.round(cnv.height*scaleUp);
-  const octx=out.getContext('2d'); octx.imageSmoothingEnabled=true; octx.drawImage(cnv,0,0,out.width,out.height);
-  let imgd=octx.getImageData(0,0,out.width,out.height), d=imgd.data;
-  let mn=255,mx=0;
-  for(let i=0;i<d.length;i+=4){ const y=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2]; d[i]=d[i+1]=d[i+2]=y; if(y<mn)mn=y; if(y>mx)mx=y; }
-  const range=Math.max(1,mx-mn);
-  for(let i=0;i<d.length;i+=4){ const v=(d[i]-mn)*255/range; d[i]=d[i+1]=d[i+2]=v; }
-  const copy=new Uint8ClampedArray(d); const w=out.width,h=out.height;
-  function px(arr,x,y){ return arr[(y*w+x)*4]; }
-  for(let y=1;y<h-1;y++){ for(let x=1;x<w-1;x++){ const vals=[px(copy,x-1,y-1),px(copy,x,y-1),px(copy,x+1,y-1),px(copy,x-1,y),px(copy,x,y),px(copy,x+1,y),px(copy,x-1,y+1),px(copy,x,y+1),px(copy,x+1,y+1)]; vals.sort((a,b)=>a-b); const m=vals[4]; const idx=(y*w+x)*4; d[idx]=d[idx+1]=d[idx+2]=m; } }
-  let sum=0; for(let i=0;i<d.length;i+=4) sum+=d[i];
-  const mean=sum/(d.length/4); const T=Math.max(110, Math.min(200, mean+8));
-  for(let i=0;i<d.length;i+=4){ const v=d[i]>T?255:0; d[i]=d[i+1]=d[i+2]=v; d[i+3]=255; }
-  octx.putImageData(imgd,0,0);
-  return out;
-}
-
-function postFixPlate(txt){
-  let s=txt.toUpperCase().replace(/[^A-Z0-9 ]+/g,' ').replace(/\s+/g,' ').trim();
-  s=s.replace(/\b0([A-Z])/g,'O$1').replace(/\bO(\d)/g,'0$1');
-  s=s.replace(/\b1([A-Z])/g,'I$1').replace(/\bI(\d)/g,'1$1');
-  s=s.replace(/B(?=\d)/g,'8').replace(/(?<=\D)8(?=\d)/g,'B');
-  s=s.replace(/S(?=\d)/g,'5').replace(/(?<=\D)5(?=\d)/g,'S');
-  const plateRe=/^[A-Z]{1,3}\s?\d{1,4}$/;
-  const toks=s.split(' ');
-  for(const t of toks){ const t2=t.length>3? t.slice(0,8):t; if(plateRe.test(t2)) return t2.replace(/(\D)(\d)/,'$1 $2'); }
-  return s;
-}
-
-async function recognizeCanvas(cnv, hint){
-  bar.style.width='10%'; bartxt.textContent=hint+' 10%';
-  const blob=await new Promise(res=>cnv.toBlob(b=>res(b),'image/png',0.92));
-  try{
-    const { data } = await Tesseract.recognize(
-      blob, 'eng',
-      {
-        workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/worker.min.js',
-        corePath:   'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.0.0/tesseract-core.wasm.js',
-        langPath:   'https://tessdata.projectnaptha.com/4.0.0',
-        tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ',
-        preserve_interword_spaces:'1',
-        tessedit_pageseg_mode:'7',
-        logger: m => { if(m.progress){ const p=Math.max(10, Math.round(m.progress*100)); bar.style.width=p+'%'; bartxt.textContent=(m.status||hint)+' '+p+'%'; } log(JSON.stringify(m)); }
-      }
-    );
-    bar.style.width='100%'; bartxt.textContent='完成 100%';
-    const text = data.text || '';
-    const conf = (typeof data.confidence==='number')? data.confidence : 0;
-    return { text: postFixPlate(text), conf };
-  }catch(err){
-    bartxt.textContent='錯誤：'+err.message; bar.style.width='0%'; log('ERROR: '+(err.stack||err));
-    return { text:'', conf:0 };
-  }
-}
-
-// ====== 全自動尋牌（單張）======
 document.getElementById('autoFind').onclick=async()=>{
-  if(!inCamera.files[0] && !inAlbum.files[0]){ alert('請先上載或選一張相'); return; }
+  if(!inCamera.files[0] && !inAlbum.files[0]){ alert('請先上載或選圖'); return; }
   statusEl.textContent='全自動尋找車牌中…';
-  const cands = generateCandidates(img);
-  let best={txt:'', score:0, cnv:null, rect:null};
-  let idx=0;
-  for(const r of cands){
-    idx++;
-    const cnv = getCropCanvasFrom(img, img.naturalWidth, img.naturalHeight, r);
-    const prep = preprocess(cnv);
-    const {text, conf} = await recognizeCanvas(prep, `尋牌 ${idx}/${cands.length}`);
-    // 打分：正則命中 + 置信度
-    const matched = /^[A-Z]{1,3}\s?\d{1,4}$/.test(text);
-    const score = conf + (matched? 30: 0);
-    if(score > best.score && text){
-      best={txt:text, score, cnv:prep, rect:r};
-    }
-  }
-  if(best.txt){
-    proc.width=best.cnv.width; proc.height=best.cnv.height; pctx.drawImage(best.cnv,0,0);
-    outEl.innerHTML='結果：<span class="ok">'+best.txt+'</span>';
-    addToList(best.txt);
-    statusEl.textContent='全自動尋牌完成 ✅';
-    // 在原圖上畫出最佳框
-    crop = {...best.rect, drag:false};
-    scale = fit(canvas, img.naturalWidth, img.naturalHeight);
-    crop.x = Math.round(best.rect.x*scale); crop.y=Math.round(best.rect.y*scale);
-    crop.w = Math.round(best.rect.w*scale); crop.h=Math.round(best.rect.h*scale);
-    draw();
-  }else{
-    outEl.innerHTML='<span class="err">未能自動找到車牌</span>';
-    statusEl.textContent='未能自動找到，請改用手動框選再試';
-  }
+  const cands=generateCandidates(img);
+  let best=''; let idx=0;
+  for(const r of cands){ idx++; const cut=getCropCanvasFrom(img,r); const prep=preprocess(cut); const t=await recognizeCanvas(prep,`尋牌 ${idx}/${cands.length}`); if(t){ best=t; break; } }
+  if(best){ outEl.innerHTML='結果：<span class="ok">'+best+'</span>'; addToList(best); statusEl.textContent='全自動尋牌完成 ✅'; } else { outEl.innerHTML='<span class="err">未能自動找到香港牌格式</span>'; statusEl.textContent='未能自動找到，請改用手動框選再試'; }
 };
 
-// ====== 單張：人工控制 ======
 document.getElementById('enhance').onclick=async()=>{
   if(!inCamera.files[0] && !inAlbum.files[0]){ alert('請先上載或拍照'); return; }
   const r={x:Math.round(crop.x/scale), y:Math.round(crop.y/scale), w:Math.round(crop.w/scale), h:Math.round(crop.h/scale)};
-  const cut=getCropCanvasFrom(img, img.naturalWidth, img.naturalHeight, r);
-  const prep=preprocess(cut);
-  proc.width=prep.width; proc.height=prep.height; pctx.drawImage(prep,0,0);
-  const {text}=await recognizeCanvas(prep,'增強 OCR');
-  outEl.innerHTML=text? '結果：<span class="ok">'+text+'</span>':'<span class="err">未能讀取</span>';
-  if(text) addToList(text);
+  const cut=getCropCanvasFrom(img,r); const prep=preprocess(cut); const t=await recognizeCanvas(prep,'增強 OCR'); outEl.innerHTML=t? '結果：<span class="ok">'+t+'</span>':'<span class="err">未能讀取（未匹配香港格式）</span>'; if(t) addToList(t);
 };
-
 document.getElementById('raw').onclick=async()=>{
   if(!inCamera.files[0] && !inAlbum.files[0]){ alert('請先上載或拍照'); return; }
   const r={x:Math.round(crop.x/scale), y:Math.round(crop.y/scale), w:Math.round(crop.w/scale), h:Math.round(crop.h/scale)};
-  const cut=getCropCanvasFrom(img, img.naturalWidth, img.naturalHeight, r);
-  const {text}=await recognizeCanvas(cut,'直接 OCR');
-  outEl.innerHTML=text? '結果：<span class="ok">'+text+'</span>':'<span class="err">未能讀取</span>';
-  if(text) addToList(text);
+  const cut=getCropCanvasFrom(img,r); const t=await recognizeCanvas(cut,'直接 OCR'); outEl.innerHTML=t? '結果：<span class="ok">'+t+'</span>':'<span class="err">未能讀取（未匹配香港格式）</span>'; if(t) addToList(t);
 };
 
-document.getElementById('copy').onclick=async()=>{
-  const txt=outEl.textContent.replace('結果：','').trim(); if(!txt){alert('沒有結果');return;}
-  try{ await navigator.clipboard.writeText(txt); alert('已複製到剪貼簿'); }catch(e){ alert('複製失敗'); }
-};
+document.getElementById('copy').onclick=async()=>{ const txt=outEl.textContent.replace('結果：','').trim(); if(!txt){alert('沒有結果');return;} try{ await navigator.clipboard.writeText(txt); alert('已複製到剪貼簿'); }catch(e){ alert('複製失敗'); } };
+document.getElementById('reset').onclick=()=>{ [inCamera,inAlbum].forEach(i=>i.value=''); initCanvas(); pctx.clearRect(0,0,proc.width,proc.height); outEl.textContent=''; bar.style.width='0%'; bartxt.textContent='就緒'; logEl.textContent=''; };
 
-document.getElementById('reset').onclick=()=>{
-  [inCamera,inAlbum].forEach(i=>i.value=''); initCanvas(); pctx.clearRect(0,0,proc.width,proc.height); outEl.textContent=''; bar.style.width='0%'; bartxt.textContent='就緒'; logEl.textContent='';
-};
-
-document.getElementById('autocrop').onclick=()=>{
-  crop.w=canvas.width*0.82; crop.h=canvas.height*0.22; crop.x=(canvas.width-crop.w)/2; crop.y=(canvas.height-crop.h)/2; draw();
-};
-
-function initCanvas(){
-  canvas.width=Math.min(window.innerWidth-40,760); canvas.height=Math.round(canvas.width*0.6);
-  const ctx2=canvas.getContext('2d');
-  ctx2.fillStyle='#f6f6f6'; ctx2.fillRect(0,0,canvas.width,canvas.height);
-  ctx2.fillStyle='#777'; ctx2.fillText('全自動模式：上載圖片 → 按「🔎 全自動尋牌」',12,20);
-  proc.width=canvas.width; proc.height=Math.round(canvas.height*0.45);
-}
+function initCanvas(){ canvas.width=Math.min(window.innerWidth-40,760); canvas.height=Math.round(canvas.width*0.6); const c2=canvas.getContext('2d'); c2.fillStyle='#f6f6f6'; c2.fillRect(0,0,canvas.width,canvas.height); c2.fillStyle='#777'; c2.fillText('上載圖片 → 按「全自動尋牌」；只保留香港牌格式',12,20); proc.width=canvas.width; proc.height=Math.round(canvas.height*0.45); }
 initCanvas();
 
-// ====== 批次模式（改為全自動尋牌） ======
 inBatch.addEventListener('change', async (e)=>{
-  const files=[...e.target.files];
-  if(!files.length) return;
-  let ok=0, fail=0, idx=0;
-  statusEl.textContent=`開始批次（全自動）：共 ${files.length} 張…`;
-  for(const f of files){
-    idx++;
-    const url = URL.createObjectURL(f);
-    const image = await new Promise(res=>{ const im=new Image(); im.onload=()=>res(im); im.src=url; });
-    URL.revokeObjectURL(url);
-    const cands = generateCandidates(image);
-    let best={txt:'', score:0, cnv:null};
-    for(const r of cands){
-      const cut=getCropCanvasFrom(image, image.naturalWidth, image.naturalHeight, r);
-      const prep=preprocess(cut);
-      const {text, conf}=await recognizeCanvas(prep,`批次尋牌 ${idx}/${files.length}`);
-      const matched=/^[A-Z]{1,3}\s?\d{1,4}$/.test(text);
-      const score=conf+(matched?30:0);
-      if(score>best.score && text){ best={txt:text, score, cnv:prep}; }
-    }
-    if(best.txt){ addToList(best.txt); ok++; } else { fail++; }
+  const files=[...e.target.files]; if(!files.length) return;
+  let ok=0, fail=0, idx=0; statusEl.textContent=`開始批次：共 ${files.length} 張…`;
+  for(const f of files){ idx++; const url=URL.createObjectURL(f); const image=await new Promise(res=>{ const im=new Image(); im.onload=()=>res(im); im.src=url; }); URL.revokeObjectURL(url);
+    const cands=generateCandidates(image); let best='';
+    for(const r of cands){ const cut=getCropCanvasFrom(image,r); const prep=preprocess(cut); const t=await recognizeCanvas(prep,`批次 ${idx}/${files.length}`); if(t){ best=t; break; } }
+    if(best){ addToList(best); ok++; } else { fail++; }
     statusEl.textContent=`進度：${idx}/${files.length}（成功 ${ok}，失敗 ${fail}）`;
     await new Promise(r=>setTimeout(r,160));
   }
-  bar.style.width='100%'; bartxt.textContent='批次完成';
-  alert(`批次完成：成功 ${ok}，失敗 ${fail}`);
+  bar.style.width='100%'; bartxt.textContent='批次完成'; alert(`批次完成：成功 ${ok}，失敗 ${fail}`);
 });
 
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js').catch(()=>{});
-}
+if ('serviceWorker' in navigator) { navigator.serviceWorker.register('./sw.js').catch(()=>{}); }
 </script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/tesseract.min.js"></script>
 </body>
