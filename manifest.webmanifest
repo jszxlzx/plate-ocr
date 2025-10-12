@@ -1,9 +1,1 @@
-{
-  "name": "車牌 OCR v6.6（TXT/CSV＋提示聲＋快速批次）",
-  "short_name": "PlateOCR",
-  "start_url": "./index.html",
-  "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#0a7b12",
-  "icons": []
-}
+{"name": "車牌 OCR v6.6b", "short_name": "PlateOCR", "start_url": "./index.html", "display": "standalone", "background_color": "#ffffff", "theme_color": "#0a7b12", "icons": []}
