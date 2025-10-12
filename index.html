@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>車牌 OCR（Lite：Canvas 增強 + Tesseract 單行模式）</title>
+<title>車牌 OCR v3a（進度條 + 明確資源路徑 + 超時提示）</title>
 <style>
   :root{--border:#e4e4e4;--muted:#666}
-  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial;margin:18px;max-width:880px;margin:18px auto}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial;margin:18px;max-width:900px}
   h1{font-size:1.4rem;margin:0 0 6px}
   .card{border:1px solid var(--border);border-radius:12px;padding:12px;margin-top:12px}
   label{display:block;margin:8px 0 6px;font-weight:600}
@@ -15,19 +15,23 @@
   #canvas,#proc{max-width:100%;border:1px dashed #ddd;margin-top:8px}
   .muted{color:var(--muted);font-size:0.92rem;margin-top:6px}
   .result{white-space:pre-wrap;margin-top:10px;font-weight:700;font-size:1.1rem}
-  .ok{color:#0a7b12}.warn{color:#9a6700}
+  .ok{color:#0a7b12}.warn{color:#9a6700}.err{color:#b10000}
   .row2{display:flex;gap:8px;flex-wrap:wrap}
   .barwrap{position:relative;background:#f3f3f3;border:1px solid #e5e5e5;border-radius:10px;height:12px;overflow:hidden}
-  .bar{position:absolute;left:0;top:0;height:100%;width:0%;background:#2ecc71}
-  .bartext{font-size:0.88rem;margin-top:4px;color:#333}
+  .bar{position:absolute;left:0;top:0;height:100%;width:0%;background:linear-gradient(90deg,#2ecc71,#27ae60)}
+  .bartext{font-size:0.9rem;margin-top:6px;color:#333}
+  details{margin-top:8px}
+  code{background:#f6f6f6;padding:2px 6px;border-radius:6px}
 </style>
 </head>
 <body>
-  <h1>車牌 OCR（Lite 快速版）</h1>
+  <h1>車牌 OCR v3a（相機 / 相簿）</h1>
+
   <div class="card">
     <label>OCR 進度</label>
     <div class="barwrap"><div id="bar" class="bar"></div></div>
     <div id="bartxt" class="bartext">就緒</div>
+    <details><summary>查看詳細日誌</summary><pre id="log" style="white-space:pre-wrap"></pre></details>
   </div>
 
   <div class="card">
@@ -38,7 +42,7 @@
     </div>
     <input id="inCamera" type="file" accept="image/*" capture="environment" style="display:none" />
     <input id="inAlbum" type="file" accept="image/*" style="display:none" />
-    <div class="muted">貼士：相機正面、光線足、車牌橫向佔畫面 ≥40%，綠框要貼住車牌邊。</div>
+    <div class="muted">貼士：正面、光線足、車牌橫向 ≥40%，綠框貼邊。</div>
 
     <label>原圖 / 裁切</label>
     <canvas id="canvas"></canvas>
@@ -56,7 +60,7 @@
 
     <div id="status" class="muted">就緒</div>
     <div id="out" class="result"></div>
-    <div class="muted">後處理：自動把 <code>O↔0</code>、<code>I/L↔1</code>、<code>B↔8</code>、<code>S↔5</code> 調整，並匹配格式 <code>^[A-Z]{1,3}\s?\d{1,4}$</code>。</div>
+    <div class="muted">後處理：<code>O↔0</code>、<code>I/L↔1</code>、<code>B↔8</code>、<code>S↔5</code>；匹配 <code>^[A-Z]{1,3}\s?\d{1,4}$</code>。</div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/tesseract.min.js"></script>
@@ -68,13 +72,16 @@ const btnAlbum=document.getElementById('btnAlbum');
 const canvas=document.getElementById('canvas'); const ctx=canvas.getContext('2d');
 const proc=document.getElementById('proc'); const pctx=proc.getContext('2d');
 const bar=document.getElementById('bar'); const bartxt=document.getElementById('bartxt');
-const statusEl=document.getElementById('status'); const outEl=document.getElementById('out');
+const statusEl=document.getElementById('status'); const outEl=document.getElementById('out'); const logEl=document.getElementById('log');
 
 let img=new Image(), imgW=0,imgH=0, scale=1;
 let crop={x:0,y:0,w:0,h:0,drag:false};
 
+function log(s){ logEl.textContent += s + '\n'; }
+
 btnCamera.onclick=()=>inCamera.click();
 btnAlbum.onclick=()=>inAlbum.click();
+
 [inCamera,inAlbum].forEach(inp=>{
   inp.addEventListener('change',e=>{
     const f=e.target.files[0]; if(!f)return;
@@ -83,11 +90,11 @@ btnAlbum.onclick=()=>inAlbum.click();
     img.onload=()=>{
       imgW=img.naturalWidth; imgH=img.naturalHeight;
       scale=fit(canvas,imgW,imgH);
-      crop.w=canvas.width*0.75; crop.h=canvas.height*0.22;
+      crop.w=canvas.width*0.78; crop.h=canvas.height*0.22;
       crop.x=(canvas.width-crop.w)/2; crop.y=(canvas.height-crop.h)/2;
       draw();
       URL.revokeObjectURL(url);
-      outEl.textContent=''; statusEl.textContent='影像已載入';
+      outEl.textContent=''; statusEl.textContent='影像已載入：拖綠框至車牌，再按「增強並辨識」';
       pctx.clearRect(0,0,proc.width,proc.height);
     };
     img.src=url;
@@ -113,42 +120,48 @@ canvas.addEventListener('pointerdown',ev=>{
   if(x>crop.x&&x<crop.x+crop.w&&y>crop.y&&y<crop.y+crop.h) crop.drag=true;
 });
 window.addEventListener('pointermove',ev=>{
-  if(!crop.drag)return;
+  if(!crop.drag) return;
   const r=canvas.getBoundingClientRect(); const x=ev.clientX-r.left, y=ev.clientY-r.top;
   crop.x=Math.min(Math.max(0,x-crop.w/2),canvas.width-crop.w);
   crop.y=Math.min(Math.max(0,y-crop.h/2),canvas.height-crop.h);
   draw();
 });
-window.addEventListener('pointerup',()=>{crop.drag=false;});
+window.addEventListener('pointerup',()=>{ crop.drag=false; });
 
 function getCropCanvas(){
   const sx=Math.round(crop.x/scale), sy=Math.round(crop.y/scale);
   const sw=Math.round(crop.w/scale), sh=Math.round(crop.h/scale);
   const tmp=document.createElement('canvas'); tmp.width=sw; tmp.height=sh;
   const t=tmp.getContext('2d'); t.drawImage(img,sx,sy,sw,sh,0,0,sw,sh);
+  // 避免太大：最大邊 1100px
+  const maxSide=1100; if (tmp.width>maxSide || tmp.height>maxSide){
+    const k=Math.min(maxSide/tmp.width, maxSide/tmp.height);
+    const c2=document.createElement('canvas'); c2.width=Math.round(tmp.width*k); c2.height=Math.round(tmp.height*k);
+    c2.getContext('2d').drawImage(tmp,0,0,c2.width,c2.height);
+    return c2;
+  }
   return tmp;
 }
 
+// Canvas 增強：放大→灰階→對比拉伸→3x3 中值→二值化
 function preprocess(cnv){
-  const tcnv=document.createElement('canvas');
-  const scaleUp=2.2; tcnv.width=Math.round(cnv.width*scaleUp); tcnv.height=Math.round(cnv.height*scaleUp);
-  const t=tcnv.getContext('2d'); t.imageSmoothingEnabled=true; t.drawImage(cnv,0,0,tcnv.width,tcnv.height);
+  const scaleUp=2.0;
+  const out=document.createElement('canvas'); out.width=Math.round(cnv.width*scaleUp); out.height=Math.round(cnv.height*scaleUp);
+  const octx=out.getContext('2d'); octx.imageSmoothingEnabled=true; octx.drawImage(cnv,0,0,out.width,out.height);
 
-  let imgd=t.getImageData(0,0,tcnv.width,tcnv.height); let d=imgd.data;
-
-  for(let i=0;i<d.length;i+=4){ const y=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2]; d[i]=d[i+1]=d[i+2]=y; }
-
-  const blur=t.getImageData(0,0,tcnv.width,tcnv.height); const bd=blur.data;
-  for(let y=1;y<tcnv.height-1;y++){ for(let x=1;x<tcnv.width-1;x++){ const idx=(y*tcnv.width+x)*4; let s=0; for(let dy=-1;dy<=1;dy++){ for(let dx=-1;dx<=1;dx++){ s+=d[((y+dy)*tcnv.width+(x+dx))*4]; }} const mean=s/9; bd[idx]=bd[idx+1]=bd[idx+2]=mean; bd[idx+3]=255; } }
-
-  for(let i=0;i<d.length;i+=4){ const sharp=Math.max(0,Math.min(255,d[i]*1.8 - bd[i]*0.8 + 20)); d[i]=d[i+1]=d[i+2]=sharp; }
-
-  const w=tcnv.width,h=tcnv.height,tile=16; const out=new Uint8ClampedArray(d.length);
-  function meanBlock(x0,y0,x1,y1){ let sum=0,c=0; for(let y=y0;y<x1;y++){ } return 0; }
-  // simplified global threshold fallback
-  for(let i=0;i<d.length;i+=4){ const v=d[i]>160?255:0; out[i]=out[i+1]=out[i+2]=v; out[i+3]=255; }
-  imgd.data.set(out); t.putImageData(imgd,0,0);
-  return tcnv;
+  let imgd=octx.getImageData(0,0,out.width,out.height), d=imgd.data;
+  let mn=255,mx=0;
+  for(let i=0;i<d.length;i+=4){ const y=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2]; d[i]=d[i+1]=d[i+2]=y; if(y<mn)mn=y; if(y>mx)mx=y; }
+  const range=Math.max(1,mx-mn);
+  for(let i=0;i<d.length;i+=4){ const v=(d[i]-mn)*255/range; d[i]=d[i+1]=d[i+2]=v; }
+  const copy=new Uint8ClampedArray(d); const w=out.width,h=out.height;
+  function px(arr,x,y){ return arr[(y*w+x)*4]; }
+  for(let y=1;y<h-1;y++){ for(let x=1;x<w-1;x++){ const vals=[px(copy,x-1,y-1),px(copy,x,y-1),px(copy,x+1,y-1),px(copy,x-1,y),px(copy,x,y),px(copy,x+1,y),px(copy,x-1,y+1),px(copy,x,y+1),px(copy,x+1,y+1)]; vals.sort((a,b)=>a-b); const m=vals[4]; const idx=(y*w+x)*4; d[idx]=d[idx+1]=d[idx+2]=m; } }
+  let sum=0; for(let i=0;i<d.length;i+=4) sum+=d[i];
+  const mean=sum/(d.length/4); const T=Math.max(110, Math.min(200, mean+8));
+  for(let i=0;i<d.length;i+=4){ const v=d[i]>T?255:0; d[i]=d[i+1]=d[i+2]=v; d[i+3]=255; }
+  octx.putImageData(imgd,0,0);
+  return out;
 }
 
 function postFixPlate(txt){
@@ -163,16 +176,42 @@ function postFixPlate(txt){
   return s;
 }
 
-async function ocrFromCanvas(cnv,hint){
+async function ocrFromCanvas(cnv, hint){
   bar.style.width='10%'; bartxt.textContent=hint+' 10%';
   const blob=await new Promise(res=>cnv.toBlob(b=>res(b),'image/png',0.92));
-  const worker=Tesseract.createWorker({ logger:m=>{ if(m.status==='recognizing text'){ const p=Math.round(m.progress*100); bar.style.width=p+'%'; bartxt.textContent=hint+' '+p+'%'; } } });
-  await worker.load(); await worker.loadLanguage('eng'); await worker.initialize('eng');
-  await worker.setParameters({ tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ', preserve_interword_spaces:'1', tessedit_pageseg_mode:'7' });
-  const {data:{text}}=await worker.recognize(blob);
-  await worker.terminate();
-  bar.style.width='100%'; bartxt.textContent='完成 100%';
-  return postFixPlate(text);
+
+  // 明確指定路徑（避免 CDN/Worker 取檔失敗）
+  const worker = Tesseract.createWorker({
+    workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/worker.min.js',
+    corePath:   'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.0.0/tesseract-core.wasm.js',
+    langPath:   'https://tessdata.projectnaptha.com/4.0.0',
+    logger: m => {
+      if(m.progress){ const p=Math.max(10, Math.round(m.progress*100)); bar.style.width=p+'%'; bartxt.textContent=(m.status||hint)+' '+p+'%'; }
+      log(JSON.stringify(m));
+    }
+  });
+
+  const timeout = new Promise((_,rej)=>setTimeout(()=>rej(new Error('OCR 超時（可能網絡阻擋 / iOS 限制）')), 60000));
+
+  try{
+    const run = (async ()=>{
+      await worker.load(); await worker.loadLanguage('eng'); await worker.initialize('eng');
+      await worker.setParameters({
+        tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ',
+        preserve_interword_spaces:'1',
+        tessedit_pageseg_mode:'7'
+      });
+      const {data:{text}}=await worker.recognize(blob);
+      await worker.terminate();
+      return text;
+    })();
+    const text = await Promise.race([run, timeout]);
+    bar.style.width='100%'; bartxt.textContent='完成 100%';
+    return postFixPlate(text||'');
+  }catch(err){
+    bartxt.textContent='錯誤：'+err.message; bar.style.width='0%'; log('ERROR: '+err.stack);
+    return '';
+  }
 }
 
 document.getElementById('enhance').onclick=async()=>{
@@ -181,27 +220,31 @@ document.getElementById('enhance').onclick=async()=>{
   const prep=preprocess(cropCnv);
   proc.width=prep.width; proc.height=prep.height; pctx.drawImage(prep,0,0);
   const t=await ocrFromCanvas(prep,'增強 OCR');
-  outEl.innerHTML=t? '結果：<span class="ok">'+t+'</span>':'<span class="warn">未能讀取</span>';
+  outEl.innerHTML=t? '結果：<span class="ok">'+t+'</span>':'<span class="err">未能讀取</span>';
 };
+
 document.getElementById('raw').onclick=async()=>{
   if(!inCamera.files[0] && !inAlbum.files[0]){ alert('請先上載或拍照'); return; }
   const cropCnv=getCropCanvas();
   const t=await ocrFromCanvas(cropCnv,'直接 OCR');
-  outEl.innerHTML=t? '結果：<span class="ok">'+t+'</span>':'<span class="warn">未能讀取</span>';
+  outEl.innerHTML=t? '結果：<span class="ok">'+t+'</span>':'<span class="err">未能讀取</span>';
 };
+
 document.getElementById('copy').onclick=async()=>{
   const txt=outEl.textContent.replace('結果：','').trim(); if(!txt){alert('沒有結果');return;}
   try{ await navigator.clipboard.writeText(txt); alert('已複製到剪貼簿'); }catch(e){ alert('複製失敗'); }
 };
+
 document.getElementById('reset').onclick=()=>{
-  [inCamera,inAlbum].forEach(i=>i.value=''); initCanvas(); pctx.clearRect(0,0,proc.width,proc.height); outEl.textContent=''; bar.style.width='0%'; bartxt.textContent='就緒';
+  [inCamera,inAlbum].forEach(i=>i.value=''); initCanvas(); pctx.clearRect(0,0,proc.width,proc.height); outEl.textContent=''; bar.style.width='0%'; bartxt.textContent='就緒'; logEl.textContent='';
 };
+
 document.getElementById('autocrop').onclick=()=>{
   crop.w=canvas.width*0.82; crop.h=canvas.height*0.22; crop.x=(canvas.width-crop.w)/2; crop.y=(canvas.height-crop.h)/2; draw();
 };
 
 function initCanvas(){
-  canvas.width=Math.min(window.innerWidth-40,720); canvas.height=Math.round(canvas.width*0.6);
+  canvas.width=Math.min(window.innerWidth-40,760); canvas.height=Math.round(canvas.width*0.6);
   ctx.fillStyle='#f6f6f6'; ctx.fillRect(0,0,canvas.width,canvas.height);
   ctx.fillStyle='#777'; ctx.fillText('上載相片或拍照 → 綠框圈住車牌 → 「增強並辨識」',12,20);
   proc.width=canvas.width; proc.height=Math.round(canvas.height*0.45);
