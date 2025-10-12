@@ -1,9 +1,0 @@
-{
-  "name": "車牌 OCR v4 一鍵離線",
-  "short_name": "PlateOCR",
-  "start_url": "./index.html",
-  "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#0a7b12",
-  "icons": []
-}
