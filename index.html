@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>車牌 OCR 進階版（OpenCV + Tesseract, 相機/相簿）</title>
+<title>車牌 OCR 進階版（OpenCV + Tesseract, 相機/相簿, 進度顯示）</title>
 <link rel="icon" href="data:;base64,iVBORw0KGgo=">
 <style>
-  :root{--border:#e4e4e4;--muted:#666}
+  :root{--border:#e4e4e4;--muted:#666;--accent:#0a7b12}
   body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial;margin:18px;max-width:920px}
   h1{font-size:1.4rem;margin:0 0 6px}
   .card{border:1px solid var(--border);border-radius:12px;padding:12px;margin-top:12px}
@@ -20,11 +20,18 @@
   .ok{color:#0a7b12}.warn{color:#9a6700}.err{color:#b10000}
   .pill{display:inline-block;border:1px solid var(--border);border-radius:999px;padding:4px 10px;margin-right:6px;font-size:0.86rem}
   .row2{display:flex;gap:8px;flex-wrap:wrap}
+  .barwrap{position:relative;background:#f3f3f3;border:1px solid #e5e5e5;border-radius:10px;height:12px;overflow:hidden}
+  .bar{position:absolute;left:0;top:0;height:100%;width:0%;background:linear-gradient(90deg,#2ecc71,#27ae60)}
+  .bartext{font-size:0.88rem;margin-top:4px;color:#333}
 </style>
 </head>
 <body>
-  <h1>車牌 OCR 進階版（iPhone 可拍照 / 相簿）</h1>
-  <div class="muted">加咗 <b>OpenCV.js</b> 影像處理（等化、去噪、二值化）+ <b>Tesseract</b> OCR，並以香港車牌格式做後處理。初次載入可能要十多秒；若 40 秒內未完成，會自動改用輕量模式（只用 Tesseract）。</div>
+  <h1>車牌 OCR 進階版（相機 / 相簿）</h1>
+  <div class="card">
+    <label>模型載入進度</label>
+    <div class="barwrap"><div id="modelBar" class="bar"></div></div>
+    <div id="modelTxt" class="bartext">初始化中…</div>
+  </div>
 
   <div class="card">
     <div class="row">
@@ -65,7 +72,6 @@
     </div>
   </div>
 
-  <!-- CDN：OpenCV.js & Tesseract.js -->
   <script src="https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.9.0-1/opencv.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/tesseract.min.js"></script>
 
@@ -74,6 +80,9 @@ const inCamera = document.getElementById('inCamera');
 const inAlbum = document.getElementById('inAlbum');
 const btnCamera = document.getElementById('btnCamera');
 const btnAlbum = document.getElementById('btnAlbum');
+
+const modelBar = document.getElementById('modelBar');
+const modelTxt = document.getElementById('modelTxt');
 
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
@@ -87,7 +96,7 @@ let img = new Image();
 let imgW=0,imgH=0, scale=1;
 let crop = {x:0,y:0,w:0,h:0,drag:false};
 let opencvReady = false;
-let fallbackMode = false; // 若 OpenCV 未能載入，會改用輕量模式
+let fallbackMode = false;
 
 btnCamera.onclick = ()=> inCamera.click();
 btnAlbum.onclick = ()=> inAlbum.click();
@@ -153,9 +162,8 @@ function getCropCanvas(){
 
 function postFixPlate(t){
   let s = t.toUpperCase().replace(/[^A-Z0-9 ]+/g,' ').replace(/\s+/g,' ').trim();
-  // 常見替換
-  s = s.replace(/0([A-Z])/g,'O$1').replace(/O(\d)/g,'0$1');
-  s = s.replace(/1([A-Z])/g,'I$1').replace(/I(\d)/g,'1$1');
+  s = s.replace(/\b0([A-Z])/g,'O$1').replace(/\bO(\d)/g,'0$1');
+  s = s.replace(/\b1([A-Z])/g,'I$1').replace(/\bI(\d)/g,'1$1');
   s = s.replace(/B(?=\d)/g,'8').replace(/(?<=\D)8(?=\d)/g,'B');
   s = s.replace(/S(?=\d)/g,'5').replace(/(?<=\D)5(?=\d)/g,'S');
   const tokens = s.split(' ');
@@ -172,7 +180,13 @@ function postFixPlate(t){
 async function runTesseractFromCanvas(cnv, hint=''){
   const blob = await new Promise(res=>cnv.toBlob(b=>res(b),'image/png',0.92));
   const worker = Tesseract.createWorker({
-    logger: m => { if(m.status==='recognizing text'){ statusEl.textContent = hint + '辨識中… ' + Math.round(m.progress*100)+'%'; } }
+    logger: m => {
+      if(m.status==='recognizing text'){
+        const p = Math.round(m.progress*100);
+        modelTxt.textContent = 'OCR ' + p + '%';
+        modelBar.style.width = p + '%';
+      }
+    }
   });
   await worker.load(); await worker.loadLanguage('eng'); await worker.initialize('eng');
   await worker.setParameters({ tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ', preserve_interword_spaces:'1' });
@@ -201,11 +215,12 @@ async function enhanceAndRecognize(){
   if(!inCamera.files[0] && !inAlbum.files[0]){ alert('請先上載或拍照'); return; }
   const cropCnv = getCropCanvas();
   if (fallbackMode || !opencvReady) {
-    // 輕量模式：直接 OCR
+    modelTxt.textContent = '輕量模式 OCR 中…'; modelBar.style.width = '10%';
     const text = await runTesseractFromCanvas(cropCnv, '（輕量模式）');
     showResult(text, false);
   } else {
     statusEl.textContent='OpenCV 處理中…';
+    modelTxt.textContent='OpenCV 處理…'; modelBar.style.width='20%';
     let big = opencvProcess(cropCnv);
     const outCnv = document.createElement('canvas');
     outCnv.width = big.cols; outCnv.height = big.rows;
@@ -215,6 +230,7 @@ async function enhanceAndRecognize(){
   }
 }
 function showResult(text, usedOpenCV){
+  modelBar.style.width = '100%'; modelTxt.textContent = '完成 100%';
   if(text){
     outEl.innerHTML = '結果：<span class="ok">'+text+'</span>' + (usedOpenCV?'':' <span class="muted">（輕量模式）</span>');
     statusEl.textContent = usedOpenCV ? '完成（OpenCV + OCR）' : '完成（僅 OCR）';
@@ -228,6 +244,7 @@ document.getElementById('enhance').onclick = enhanceAndRecognize;
 
 document.getElementById('recognizeRaw').onclick = async ()=>{
   if(!inCamera.files[0] && !inAlbum.files[0]){ alert('請先上載或拍照'); return; }
+  modelTxt.textContent='OCR 準備中…'; modelBar.style.width='10%';
   const cropCnv = getCropCanvas();
   const text = await runTesseractFromCanvas(cropCnv, '（原圖）');
   showResult(text, false);
@@ -239,6 +256,7 @@ document.getElementById('reset').onclick = ()=>{
   pctx.clearRect(0,0,proc.width,proc.height);
   outEl.textContent='';
   statusEl.textContent='已重設';
+  modelBar.style.width='0%'; modelTxt.textContent='初始化中…';
 };
 
 document.getElementById('autocrop').onclick = ()=>{
@@ -256,13 +274,18 @@ function initCanvas(){
 }
 initCanvas();
 
-// === OpenCV 載入監控 & Fallback ===
+// === OpenCV 載入監控 & 進度條（模擬） & Fallback ===
 procTag.textContent = '（OpenCV 預覽）';
 statusEl.textContent = '正在載入模型…（首次約 20–40 秒）';
+let approx = 0;
+const inc = ()=>{ approx = Math.min(approx+2, 90); modelBar.style.width = approx+'%'; modelTxt.textContent = '載入中… '+approx+'%'; };
+let approxTimer = setInterval(inc, 700);
+
 let loadTimer = setTimeout(()=>{
   if (!opencvReady){
     fallbackMode = true;
-    statusEl.textContent = 'OpenCV 載入超時，已切換到「輕量模式」（可直接使用）。';
+    clearInterval(approxTimer);
+    modelBar.style.width='35%'; modelTxt.textContent = 'OpenCV 載入超時，切換「輕量模式」';
     procTag.textContent = '（OpenCV 未就緒，略過預覽）';
   }
 }, 40000);
@@ -270,8 +293,9 @@ let loadTimer = setTimeout(()=>{
 if (window.cv){
   cv['onRuntimeInitialized'] = ()=>{
     opencvReady = true;
-    clearTimeout(loadTimer);
-    statusEl.textContent = 'OpenCV 已就緒，可使用「處理並辨識」獲得較高準確度。';
+    clearTimeout(loadTimer); clearInterval(approxTimer);
+    modelBar.style.width='100%'; modelTxt.textContent = 'OpenCV 已就緒 100%';
+    statusEl.textContent = 'OpenCV 已就緒，可用「處理並辨識」獲較高準確度。';
     procTag.textContent = '（OpenCV 預覽）';
   };
 }
