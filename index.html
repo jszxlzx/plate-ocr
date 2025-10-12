@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>車牌 OCR 進階版（OpenCV + Tesseract）</title>
+<title>車牌 OCR 進階版（OpenCV + Tesseract, 相機/相簿）</title>
 <link rel="icon" href="data:;base64,iVBORw0KGgo=">
 <style>
   :root{--border:#e4e4e4;--muted:#666}
-  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial;margin:18px;max-width:860px}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial;margin:18px;max-width:920px}
   h1{font-size:1.4rem;margin:0 0 6px}
   .card{border:1px solid var(--border);border-radius:12px;padding:12px;margin-top:12px}
   label{display:block;margin:8px 0 6px;font-weight:600}
-  button,input[type=file]{padding:10px;border-radius:8px;border:1px solid #ccc;background:#fff}
+  button{padding:10px 12px;border-radius:10px;border:1px solid #ccc;background:#fff}
   .controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
   #canvas,#proc{max-width:100%;border:1px dashed #ddd;margin-top:8px}
   .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
@@ -19,29 +19,35 @@
   .result{white-space:pre-wrap;margin-top:10px;font-weight:700;font-size:1.1rem}
   .ok{color:#0a7b12}.warn{color:#9a6700}.err{color:#b10000}
   .pill{display:inline-block;border:1px solid var(--border);border-radius:999px;padding:4px 10px;margin-right:6px;font-size:0.86rem}
+  .row2{display:flex;gap:8px;flex-wrap:wrap}
 </style>
 </head>
 <body>
-  <h1>車牌 OCR 進階版（iPhone 可拍照）</h1>
-  <div class="muted">此版本加咗 <b>OpenCV.js</b> 做影像處理（等化、去噪、增強、二值化），再喂入 <b>Tesseract</b>，並以香港車牌格式做後處理，準確度較高。</div>
+  <h1>車牌 OCR 進階版（iPhone 可拍照 / 相簿）</h1>
+  <div class="muted">加咗 <b>OpenCV.js</b> 影像處理（等化、去噪、二值化）+ <b>Tesseract</b> OCR，並以香港車牌格式做後處理。初次載入可能要十多秒；若 40 秒內未完成，會自動改用輕量模式（只用 Tesseract）。</div>
 
   <div class="card">
     <div class="row">
       <div>
         <label>步驟 1：拍照或選圖</label>
-        <input id="file" type="file" accept="image/*" capture="environment" />
+        <div class="row2">
+          <button id="btnCamera">📸 拍照上載</button>
+          <button id="btnAlbum">🖼️ 從相簿選擇</button>
+        </div>
+        <input id="inCamera" type="file" accept="image/*" capture="environment" style="display:none" />
+        <input id="inAlbum" type="file" accept="image/*" style="display:none" />
         <div class="muted">拍攝時盡量正面、光線充足、車牌橫向佔畫面 40% 以上。</div>
       </div>
       <div>
-        <span class="pill">處理流程：灰階 → 等化 → 去噪 → 自適應二值化 → 放大 → 形態學</span>
-        <div class="muted">如有需要可拖動綠框裁切。</div>
+        <span class="pill">流程：灰階 → 等化 → 去噪 → 自適應二值化 → 放大 → 形態學</span>
+        <div class="muted">如需可拖動綠框裁切。</div>
       </div>
     </div>
 
     <label>原圖 / 裁切</label>
     <canvas id="canvas"></canvas>
 
-    <label>處理後（OpenCV 預覽）</label>
+    <label>處理後（OpenCV 預覽）<span id="procTag" class="muted"></span></label>
     <canvas id="proc"></canvas>
 
     <div class="controls">
@@ -55,36 +61,64 @@
     <div id="status" class="muted">初始化中…</div>
     <div id="out" class="result"></div>
     <div class="muted" style="margin-top:8px">
-      常見誤讀會自動更正：<code>O↔0</code>、<code>I/L↔1</code>、<code>B↔8</code>、<code>S↔5</code>。<br>
-      香港常見格式：<code>^[A-Z]{1,3}\s?\d{1,4}$</code>（例如 <b>WV 7850</b>）。
+      常見誤讀自動更正：<code>O↔0</code>、<code>I/L↔1</code>、<code>B↔8</code>、<code>S↔5</code>。香港常見格式：<code>^[A-Z]{1,3}\s?\d{1,4}$</code>（例如 <b>WV 7850</b>）。
     </div>
   </div>
 
-  <!-- OpenCV.js & Tesseract.js CDN -->
+  <!-- CDN：OpenCV.js & Tesseract.js -->
   <script src="https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.9.0-1/opencv.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/tesseract.min.js"></script>
 
 <script>
-const fileEl = document.getElementById('file');
+const inCamera = document.getElementById('inCamera');
+const inAlbum = document.getElementById('inAlbum');
+const btnCamera = document.getElementById('btnCamera');
+const btnAlbum = document.getElementById('btnAlbum');
+
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 const proc = document.getElementById('proc');
 const pctx = proc.getContext('2d');
 const statusEl = document.getElementById('status');
 const outEl = document.getElementById('out');
+const procTag = document.getElementById('procTag');
 
 let img = new Image();
 let imgW=0,imgH=0, scale=1;
 let crop = {x:0,y:0,w:0,h:0,drag:false};
+let opencvReady = false;
+let fallbackMode = false; // 若 OpenCV 未能載入，會改用輕量模式
+
+btnCamera.onclick = ()=> inCamera.click();
+btnAlbum.onclick = ()=> inAlbum.click();
+
+[inCamera, inAlbum].forEach(inp => {
+  inp.addEventListener('change', e=>{
+    const f=e.target.files[0]; if(!f) return;
+    const url = URL.createObjectURL(f);
+    img = new Image();
+    img.onload = ()=>{
+      imgW=img.naturalWidth; imgH=img.naturalHeight;
+      scale = fitCanvasTo(imgW,imgH,canvas);
+      crop.w = canvas.width*0.7; crop.h = canvas.height*0.22;
+      crop.x = (canvas.width-crop.w)/2; crop.y=(canvas.height-crop.h)/2;
+      drawOverlay();
+      URL.revokeObjectURL(url);
+      statusEl.textContent = '影像已載入，拖綠框至車牌，然後按「處理並辨識」或「直接辨識」。';
+      pctx.clearRect(0,0,proc.width,proc.height);
+      outEl.textContent='';
+    };
+    img.src = url;
+  });
+});
 
 function fitCanvasTo(w,h, el){
-  const maxW = Math.min(window.innerWidth-40, 820);
+  const maxW = Math.min(window.innerWidth-40, 860);
   const s = Math.min(1, maxW / w);
   el.width = Math.round(w*s);
   el.height = Math.round(h*s);
   return s;
 }
-
 function drawOverlay(){
   ctx.clearRect(0,0,canvas.width,canvas.height);
   ctx.drawImage(img,0,0,imgW*scale,imgH*scale);
@@ -94,25 +128,6 @@ function drawOverlay(){
     ctx.beginPath();ctx.rect(0,0,canvas.width,canvas.height);ctx.rect(crop.x,crop.y,crop.w,crop.h);ctx.fill('evenodd');
   }
 }
-
-fileEl.addEventListener('change', e=>{
-  const f = e.target.files[0]; if(!f) return;
-  const url = URL.createObjectURL(f);
-  img = new Image();
-  img.onload = ()=>{
-    imgW = img.naturalWidth; imgH = img.naturalHeight;
-    scale = fitCanvasTo(imgW,imgH,canvas);
-    crop.w = canvas.width*0.7; crop.h = canvas.height*0.22;
-    crop.x = (canvas.width-crop.w)/2; crop.y = (canvas.height-crop.h)/2;
-    drawOverlay();
-    URL.revokeObjectURL(url);
-    statusEl.textContent = '影像已載入，拖綠框至車牌，然後按「處理並辨識」。';
-    pctx.clearRect(0,0,proc.width,proc.height);
-    outEl.textContent='';
-  };
-  img.src = url;
-});
-
 canvas.addEventListener('pointerdown', ev=>{
   const r=canvas.getBoundingClientRect(); const x=ev.clientX-r.left, y=ev.clientY-r.top;
   if (x>crop.x && x<crop.x+crop.w && y>crop.y && y<crop.y+crop.h){ crop.drag=true; }
@@ -132,16 +147,16 @@ function getCropCanvas(){
   const tmp = document.createElement('canvas');
   tmp.width = sw; tmp.height = sh;
   const tctx = tmp.getContext('2d');
-  tctx.drawImage(img, sx, sy, sw, sh, 0,0,sw,sh);
+  tctx.drawImage(img, sx,sy,sw,sh, 0,0,sw,sh);
   return tmp;
 }
 
 function postFixPlate(t){
   let s = t.toUpperCase().replace(/[^A-Z0-9 ]+/g,' ').replace(/\s+/g,' ').trim();
-  // common swaps
-  s = s.replace(/\b0([A-Z])/g,'O$1').replace(/\bO(\d)/g,'0$1');
-  s = s.replace(/\b1([A-Z])/g,'I$1').replace(/\bI(\d)/g,'1$1');
-  s = s.replace(/B(?=\d)/g,'8').replace(/(?<=\D)8(?=\d)/g,'B'); // loose
+  // 常見替換
+  s = s.replace(/0([A-Z])/g,'O$1').replace(/O(\d)/g,'0$1');
+  s = s.replace(/1([A-Z])/g,'I$1').replace(/I(\d)/g,'1$1');
+  s = s.replace(/B(?=\d)/g,'8').replace(/(?<=\D)8(?=\d)/g,'B');
   s = s.replace(/S(?=\d)/g,'5').replace(/(?<=\D)5(?=\d)/g,'S');
   const tokens = s.split(' ');
   const plateRe = /^[A-Z]{1,3}\s?\d{1,4}$/;
@@ -160,10 +175,7 @@ async function runTesseractFromCanvas(cnv, hint=''){
     logger: m => { if(m.status==='recognizing text'){ statusEl.textContent = hint + '辨識中… ' + Math.round(m.progress*100)+'%'; } }
   });
   await worker.load(); await worker.loadLanguage('eng'); await worker.initialize('eng');
-  await worker.setParameters({
-    tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ',
-    preserve_interword_spaces:'1'
-  });
+  await worker.setParameters({ tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ', preserve_interword_spaces:'1' });
   const {data:{text}} = await worker.recognize(blob);
   await worker.terminate();
   return postFixPlate(text);
@@ -172,97 +184,97 @@ async function runTesseractFromCanvas(cnv, hint=''){
 function opencvProcess(srcCanvas){
   const src = cv.imread(srcCanvas);
   let mat = new cv.Mat(); cv.cvtColor(src, mat, cv.COLOR_RGBA2GRAY);
-  // equalize + denoise
   cv.equalizeHist(mat, mat);
   cv.GaussianBlur(mat, mat, new cv.Size(3,3), 0, 0, cv.BORDER_DEFAULT);
-  // adaptive threshold
   let th = new cv.Mat();
   cv.adaptiveThreshold(mat, th, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 31, 5);
-  // morphological ops to enhance characters
   let kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(2,2));
   cv.morphologyEx(th, th, cv.MORPH_CLOSE, kernel);
-  // upscale 2x to help OCR
   let big = new cv.Mat();
   cv.resize(th, big, new cv.Size(0,0), 2, 2, cv.INTER_CUBIC);
-
   cv.imshow('proc', big);
   src.delete(); mat.delete(); th.delete(); kernel.delete();
   return big;
 }
 
 async function enhanceAndRecognize(){
-  if(!fileEl.files[0]){ alert('請先上載或拍照'); return; }
-  statusEl.textContent='OpenCV 處理中…';
+  if(!inCamera.files[0] && !inAlbum.files[0]){ alert('請先上載或拍照'); return; }
   const cropCnv = getCropCanvas();
-  // process
-  let big = opencvProcess(cropCnv);
-  // convert mat back to canvas for OCR
-  const outCnv = document.createElement('canvas');
-  outCnv.width = big.cols; outCnv.height = big.rows;
-  cv.imshow(outCnv, big); big.delete();
-  // OCR
-  const text = await runTesseractFromCanvas(outCnv, '（OpenCV 處理後）');
+  if (fallbackMode || !opencvReady) {
+    // 輕量模式：直接 OCR
+    const text = await runTesseractFromCanvas(cropCnv, '（輕量模式）');
+    showResult(text, false);
+  } else {
+    statusEl.textContent='OpenCV 處理中…';
+    let big = opencvProcess(cropCnv);
+    const outCnv = document.createElement('canvas');
+    outCnv.width = big.cols; outCnv.height = big.rows;
+    cv.imshow(outCnv, big); big.delete();
+    const text = await runTesseractFromCanvas(outCnv, '（OpenCV 處理後）');
+    showResult(text, true);
+  }
+}
+function showResult(text, usedOpenCV){
   if(text){
-    outEl.innerHTML = '結果：<span class="ok">'+text+'</span>';
-    statusEl.textContent='完成（OpenCV + OCR）';
+    outEl.innerHTML = '結果：<span class="ok">'+text+'</span>' + (usedOpenCV?'':' <span class="muted">（輕量模式）</span>');
+    statusEl.textContent = usedOpenCV ? '完成（OpenCV + OCR）' : '完成（僅 OCR）';
   }else{
-    outEl.innerHTML = '<span class="warn">未能讀取，試試拖大綠框、更近距離或改用「直接辨識」</span>';
+    outEl.innerHTML = '<span class="warn">未能讀取，請調整框選或靠近再拍。</span>';
     statusEl.textContent='未能讀取';
   }
 }
 
-document.getElementById('enhance').addEventListener('click', ()=>{
-  enhanceAndRecognize();
-});
+document.getElementById('enhance').onclick = enhanceAndRecognize;
 
-document.getElementById('recognizeRaw').addEventListener('click', async ()=>{
-  if(!fileEl.files[0]){ alert('請先上載或拍照'); return; }
+document.getElementById('recognizeRaw').onclick = async ()=>{
+  if(!inCamera.files[0] && !inAlbum.files[0]){ alert('請先上載或拍照'); return; }
   const cropCnv = getCropCanvas();
   const text = await runTesseractFromCanvas(cropCnv, '（原圖）');
-  if(text){
-    outEl.innerHTML = '結果：<span class="ok">'+text+'</span>';
-    statusEl.textContent='完成（原圖 OCR）';
-  }else{
-    outEl.innerHTML = '<span class="warn">未能讀取，請改用「處理並辨識」或調整框選。</span>';
-    statusEl.textContent='未能讀取';
-  }
-});
+  showResult(text, false);
+};
 
-document.getElementById('reset').addEventListener('click', ()=>{
-  if(!fileEl.files[0]) return;
-  const url = URL.createObjectURL(fileEl.files[0]);
-  img = new Image();
-  img.onload = ()=>{
-    imgW = img.naturalWidth; imgH = img.naturalHeight;
-    scale = fitCanvasTo(imgW,imgH,canvas);
-    crop.w = canvas.width*0.7; crop.h = canvas.height*0.22;
-    crop.x = (canvas.width-crop.w)/2; crop.y = (canvas.height-crop.h)/2;
-    drawOverlay(); pctx.clearRect(0,0,proc.width,proc.height);
-    URL.revokeObjectURL(url); outEl.textContent=''; statusEl.textContent='已重設';
-  }
-  img.src = url;
-});
+document.getElementById('reset').onclick = ()=>{
+  [inCamera, inAlbum].forEach(i=>i.value='');
+  initCanvas();
+  pctx.clearRect(0,0,proc.width,proc.height);
+  outEl.textContent='';
+  statusEl.textContent='已重設';
+};
 
-document.getElementById('autocrop').addEventListener('click', ()=>{
-  // very light heuristic: center & 1:4 ratio
+document.getElementById('autocrop').onclick = ()=>{
   crop.w = canvas.width*0.8; crop.h = canvas.height*0.2;
   crop.x = (canvas.width-crop.w)/2; crop.y = (canvas.height-crop.h)/2;
   drawOverlay();
-});
+};
 
-// initial canvases
-(function init(){
-  canvas.width = Math.min(window.innerWidth-40, 720);
+function initCanvas(){
+  canvas.width = Math.min(window.innerWidth-40, 800);
   canvas.height = Math.round(canvas.width*0.6);
   ctx.fillStyle='#f6f6f6'; ctx.fillRect(0,0,canvas.width,canvas.height);
-  ctx.fillStyle='#777'; ctx.fillText('上載相片或拍照 → 綠框圈住車牌 → 按「處理並辨識」', 12, 20);
+  ctx.fillStyle='#777'; ctx.fillText('上載相片或拍照 → 綠框圈住車牌 → 按「處理並辨識」或「直接辨識」', 12, 20);
   proc.width = canvas.width; proc.height = Math.round(canvas.height*0.45);
-  statusEl.textContent='OpenCV 初始化中…';
-  // When OpenCV is ready it sets cv.onRuntimeInitialized
-  if (window.cv) {
-    cv['onRuntimeInitialized'] = ()=>{ statusEl.textContent = 'OpenCV 已就緒'; };
+}
+initCanvas();
+
+// === OpenCV 載入監控 & Fallback ===
+procTag.textContent = '（OpenCV 預覽）';
+statusEl.textContent = '正在載入模型…（首次約 20–40 秒）';
+let loadTimer = setTimeout(()=>{
+  if (!opencvReady){
+    fallbackMode = true;
+    statusEl.textContent = 'OpenCV 載入超時，已切換到「輕量模式」（可直接使用）。';
+    procTag.textContent = '（OpenCV 未就緒，略過預覽）';
   }
-})();
+}, 40000);
+
+if (window.cv){
+  cv['onRuntimeInitialized'] = ()=>{
+    opencvReady = true;
+    clearTimeout(loadTimer);
+    statusEl.textContent = 'OpenCV 已就緒，可使用「處理並辨識」獲得較高準確度。';
+    procTag.textContent = '（OpenCV 預覽）';
+  };
+}
 </script>
 </body>
 </html>
