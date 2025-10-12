@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#0a7b12">
-<title>車牌 OCR v6.2（全自動＋嚴格輸出）</title>
+<title>車牌 OCR v6.5（精準＋批次進度＋震動）</title>
 <style>
   :root{--border:#e4e4e4;--muted:#666}
   body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial;margin:14px;max-width:920px}
@@ -32,10 +32,11 @@
   .small{font-size:0.86rem}
   textarea{width:100%;min-height:90px;padding:8px;border:1px solid #ddd;border-radius:8px}
   .tog{display:flex;gap:8px;align-items:center;margin-top:6px;font-size:.92rem}
+  .stats{font-size:0.92rem;margin-top:6px}
 </style>
 </head>
 <body>
-  <h1>車牌 OCR v6.2（全自動＋嚴格輸出）</h1>
+  <h1>車牌 OCR v6.5（精準＋批次進度＋震動）</h1>
 
   <div class="card">
     <div class="flex">
@@ -57,7 +58,7 @@
     </div>
     <div class="tog">
       <input type="checkbox" id="spaceToggle">
-      <label for="spaceToggle">輸出「字母數字之間加空格」（默認關閉，會輸出如 <b>WJ7571</b>）</label>
+      <label for="spaceToggle">輸出「字母數字之間加空格」（默認關閉 → <b>HA2816</b>；開啟 → <b>HA 2816</b>）</label>
     </div>
     <div class="list" id="listBox"></div>
   </div>
@@ -65,7 +66,7 @@
   <div class="card">
     <label>OCR / 模型載入進度</label>
     <div class="barwrap"><div id="bar" class="bar"></div></div>
-    <div id="bartxt" class="bartext">就緒（即時從 CDN 載入模型）</div>
+    <div id="bartxt" class="bartext">就緒（從 CDN 載入模型）</div>
     <details><summary>查看詳細日誌</summary><pre id="log" style="white-space:pre-wrap"></pre></details>
   </div>
 
@@ -79,7 +80,7 @@
     <input id="inCamera" type="file" accept="image/*" capture="environment" style="display:none" />
     <input id="inAlbum" type="file" accept="image/*" style="display:none" />
     <input id="inBatch" type="file" accept="image/*" multiple style="display:none" />
-    <div class="muted">全自動會嘗試多個候選框；輸出只會保留「香港車牌格式」命中結果，其餘不入清單。</div>
+    <div class="muted">自動會做候選框＋旋轉＋反色＋前處理；只保留符合香港格式且達到信心分的結果。</div>
 
     <label>原圖 / 裁切（單張）</label>
     <canvas id="canvas"></canvas>
@@ -99,23 +100,30 @@
     <div id="out" class="result"></div>
   </div>
 
+  <div class="card">
+    <label>批次進度</label>
+    <div class="barwrap"><div id="bbar" class="bar"></div></div>
+    <div id="bbartxt" class="bartext">未開始</div>
+    <div id="batchStats" class="stats"></div>
+  </div>
+
 <script>
 function pad(n){return n<10?('0'+n):n}
 function nowTitleWith(name){ const d=new Date(); return `${pad(d.getDate())}/${pad(d.getMonth()+1)} ${pad(d.getHours())}${pad(d.getMinutes())} ${name||''}`.trim(); }
 
 const DEFAULT_CP=['牛頭角','新蒲崗','觀塘','葵芳','荃灣','旺角','油麻地','九龍灣','尖沙咀','中環','將軍澳'];
-const LS_CP='plateocr_v62_cp';
+const LS_CP='plateocr_v65_cp';
 let CP=JSON.parse(localStorage.getItem(LS_CP)||'null')||DEFAULT_CP.slice();
 const chipsDom=document.getElementById('chips'),cpEdit=document.getElementById('cpEdit');
-function renderChips(){ chipsDom.innerHTML=''; CP.forEach(name=>{ const b=document.createElement('button'); b.className='chip'; b.textContent=name; b.onclick=()=>{ document.getElementById('title').value=nowTitleWith(name); localStorage.setItem('plateocr_v62_title', document.getElementById('title').value); renderList(); [...chipsDom.children].forEach(x=>x.classList.remove('sel')); b.classList.add('sel'); }; chipsDom.appendChild(b); }); cpEdit.value=CP.join('\n'); }
+function renderChips(){ chipsDom.innerHTML=''; CP.forEach(name=>{ const b=document.createElement('button'); b.className='chip'; b.textContent=name; b.onclick=()=>{ document.getElementById('title').value=nowTitleWith(name); localStorage.setItem('plateocr_v65_title', document.getElementById('title').value); renderList(); [...chipsDom.children].forEach(x=>x.classList.remove('sel')); b.classList.add('sel'); }; chipsDom.appendChild(b); }); cpEdit.value=CP.join('\n'); }
 renderChips();
 document.getElementById('cpSave').onclick=()=>{ const lines=cpEdit.value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean); CP=lines.length?lines:DEFAULT_CP.slice(); localStorage.setItem(LS_CP,JSON.stringify(CP)); renderChips(); };
 document.getElementById('cpReset').onclick=()=>{ CP=DEFAULT_CP.slice(); localStorage.setItem(LS_CP,JSON.stringify(CP)); renderChips(); };
 
-const listBox=document.getElementById('listBox'); const LS_KEY='plateocr_v62_list'; const TITLE_KEY='plateocr_v62_title';
+const listBox=document.getElementById('listBox'); const LS_KEY='plateocr_v65_list'; const TITLE_KEY='plateocr_v65_title';
 let list=JSON.parse(localStorage.getItem(LS_KEY)||'[]');
 function renderList(){ const lines=list.map(x=>x.text).join('\n'); listBox.textContent=(document.getElementById('title').value||'(未命名)') + '\n' + (lines||'(尚未新增)'); }
-function addToList(plate){ if(!plate) return; list.push({text:plate,ts:Date.now()}); localStorage.setItem(LS_KEY,JSON.stringify(list)); renderList(); }
+function addToList(plate){ if(!plate) return; list.push({text:plate,ts:Date.now()}); localStorage.setItem(LS_KEY,JSON.stringify(list)); renderList(); try{ if(navigator.vibrate) navigator.vibrate([30]); }catch(e){} }
 function clearList(){ list=[]; localStorage.removeItem(LS_KEY); renderList(); }
 
 (function(){ const t=localStorage.getItem(TITLE_KEY)||nowTitleWith(''); const el=document.getElementById('title'); el.value=t; el.addEventListener('input',()=>localStorage.setItem(TITLE_KEY,el.value)); renderList(); })();
@@ -136,51 +144,92 @@ function fit(el,w,h){ const maxW=Math.min(window.innerWidth-40,820); const s=Mat
 function draw(){ ctx.clearRect(0,0,canvas.width,canvas.height); ctx.drawImage(img,0,0,imgW*scale,imgH*scale); if(crop.w&&crop.h){ ctx.strokeStyle='lime'; ctx.lineWidth=2; ctx.strokeRect(crop.x,crop.y,crop.w,crop.h); } }
 
 function getCropCanvasFrom(img, rect){ const tmp=document.createElement('canvas'); tmp.width=rect.w; tmp.height=rect.h; tmp.getContext('2d').drawImage(img,rect.x,rect.y,rect.w,rect.h,0,0,rect.w,rect.h); return tmp; }
-function generateCandidates(img){ const W=img.naturalWidth, H=img.naturalHeight, cand=[]; const ar=[4.5,4.0,5.0], hf=[0.16,0.2,0.24], rows=[0.38,0.48,0.58]; for(const a of ar){ for(const h of hf){ const hh=Math.round(H*h), ww=Math.round(hh*a); for(const cy of rows){ const y=Math.max(0,Math.min(H-hh,Math.round(H*cy-hh/2))); const x=Math.max(0,Math.min(W-ww,Math.round(W*0.5-ww/2))); cand.push({x,y,w:ww,h:hh}); } } } const shift=[-0.18,0,0.18]; const baseH=Math.round(H*0.20), baseW=Math.round(baseH*4.5); for(const sx of shift){ const w=baseW,h=baseH; const x=Math.max(0,Math.min(W-w,Math.round(W*(0.5+sx)-w/2))); const y=Math.max(0,Math.min(H-h,Math.round(H*0.5-h/2))); cand.push({x,y,w,h}); } const uniq=[], seen=new Set(); for(const r of cand){ const k=[r.x,r.y,r.w,r.h].join(','); if(!seen.has(k)){ seen.add(k); uniq.push(r); } } return uniq; }
+function generateCandidates(img){ const W=img.naturalWidth, H=img.naturalHeight, cand=[]; const ar=[4.5,4.0,5.0], hf=[0.16,0.2,0.24], rows=[0.32,0.42,0.52,0.62]; for(const a of ar){ for(const h of hf){ const hh=Math.round(H*h), ww=Math.round(hh*a); for(const cy of rows){ const y=Math.max(0,Math.min(H-hh,Math.round(H*cy-hh/2))); const x=Math.max(0,Math.min(W-ww,Math.round(W*0.5-ww/2))); const r={x,y,w:ww,h:hh}; if(passesAspectRatio(r)) cand.push(r); } } } const shift=[-0.22,-0.12,0,0.12,0.22]; const baseH=Math.round(H*0.20), baseW=Math.round(baseH*4.5); for(const sx of shift){ const w=baseW,h=baseH; const x=Math.max(0,Math.min(W-w,Math.round(W*(0.5+sx)-w/2))); const y=Math.max(0,Math.min(H-h,Math.round(H*0.5-h/2))); const r={x,y,w,h}; if(passesAspectRatio(r)) cand.push(r); } const uniq=[], seen=new Set(); for(const r of cand){ const k=[r.x,r.y,r.w,r.h].join(','); if(!seen.has(k)){ seen.add(k); uniq.push(r); } } return uniq; }
+function passesAspectRatio(r){ const ar=r.w/r.h; if(ar<2.5||ar>6.5) return false; if(r.w*r.h<10000) return false; return true; }
+function isYellowOrWhite(cnv){ const ctx=cnv.getContext('2d'); const d=ctx.getImageData(0,0,cnv.width,cnv.height).data; let r=0,g=0,b=0,n=d.length/4; for(let i=0;i<d.length;i+=4){ r+=d[i]; g+=d[i+1]; b+=d[i+2]; } r/=n; g/=n; b/=n; if(((r+g)/2 - b) > 20) return true; if(r>180 && g>180 && b>180) return true; return false; }
 
 function preprocess(cnv){ const scaleUp=2.0; const out=document.createElement('canvas'); out.width=Math.round(cnv.width*scaleUp); out.height=Math.round(cnv.height*scaleUp); const octx=out.getContext('2d'); octx.imageSmoothingEnabled=true; octx.drawImage(cnv,0,0,out.width,out.height); let imgd=octx.getImageData(0,0,out.width,out.height), d=imgd.data; let mn=255,mx=0; for(let i=0;i<d.length;i+=4){ const y=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2]; d[i]=d[i+1]=d[i+2]=y; if(y<mn)mn=y; if(y>mx)mx=y; } const range=Math.max(1,mx-mn); for(let i=0;i<d.length;i+=4){ const v=(d[i]-mn)*255/range; d[i]=d[i+1]=d[i+2]=v; } const copy=new Uint8ClampedArray(d); const w=out.width,h=out.height; function px(a,x,y){ return a[(y*w+x)*4]; } for(let y=1;y<h-1;y++){ for(let x=1;x<w-1;x++){ const vals=[px(copy,x-1,y-1),px(copy,x,y-1),px(copy,x+1,y-1),px(copy,x-1,y),px(copy,x,y),px(copy,x+1,y),px(copy,x-1,y+1),px(copy,x,y+1),px(copy,x+1,y+1)]; vals.sort((a,b)=>a-b); const m=vals[4]; const idx=(y*w+x)*4; d[idx]=d[idx+1]=d[idx+2]=m; } } let sum=0; for(let i=0;i<d.length;i+=4) sum+=d[i]; const mean=sum/(d.length/4); const T=Math.max(110,Math.min(200,mean+8)); for(let i=0;i<d.length;i+=4){ const v=d[i]>T?255:0; d[i]=d[i+1]=d[i+2]=v; d[i+3]=255; } octx.putImageData(imgd,0,0); return out; }
+function rotateCanvas(src,deg){ const rad=deg*Math.PI/180; const s=Math.abs(Math.sin(rad)), c=Math.abs(Math.cos(rad)); const w=src.width,h=src.height; const rw=Math.round(w*c+h*s), rh=Math.round(w*s+h*c); const out=document.createElement('canvas'); out.width=rw; out.height=rh; const ct=out.getContext('2d'); ct.translate(rw/2,rh/2); ct.rotate(rad); ct.drawImage(src,-w/2,-h/2); return out; }
 
 function strictExtractPlate(raw){ const withSpace=document.getElementById('spaceToggle').checked; const up=(raw||'').toUpperCase(); const alnum=up.replace(/[^A-Z0-9]/g,''); const m=alnum.match(/[A-Z]{1,3}\d{1,4}/); if(m){ const plate=m[0]; return withSpace? plate.replace(/([A-Z]+)(\d+)/,'$1 $2') : plate; } return ''; }
 
-async function recognizeCanvas(cnv, hint){ bar.style.width='10%'; bartxt.textContent=hint+' 10%'; const blob=await new Promise(res=>cnv.toBlob(b=>res(b),'image/png',0.92)); try{ const {data}=await Tesseract.recognize(blob,'eng',{ workerPath:'https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/worker.min.js', corePath:'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.0.0/tesseract-core.wasm.js', langPath:'https://tessdata.projectnaptha.com/4.0.0', tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ', preserve_interword_spaces:'1', tessedit_pageseg_mode:'7', logger:m=>{ if(m.progress){ const p=Math.max(10,Math.round(m.progress*100)); bar.style.width=p+'%'; bartxt.textContent=(m.status||hint)+' '+p+'%'; } log(JSON.stringify(m)); } }); bar.style.width='100%'; bartxt.textContent='完成 100%'; return strictExtractPlate(data.text||''); }catch(err){ bartxt.textContent='錯誤：'+err.message; bar.style.width='0%'; log('ERROR: '+(err.stack||err)); return ''; } }
+async function ocrOnce(cnv, hint){ const blob=await new Promise(res=>cnv.toBlob(b=>res(b),'image/png',0.92)); const {data}=await Tesseract.recognize(blob,'eng',{ workerPath:'https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/worker.min.js', corePath:'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.0.0/tesseract-core.wasm.js', langPath:'https://tessdata.projectnaptha.com/4.0.0', tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ', preserve_interword_spaces:'1', tessedit_pageseg_mode:'7', logger:m=>{ if(m.progress){ const p=Math.max(10,Math.round(m.progress*100)); bar.style.width=p+'%'; bartxt.textContent=(m.status||hint)+' '+p+'%'; } } }); return data; }
+
+async function recognizeSmart(cnv, baseHint){
+  const angles=[-8,-4,0,4,8];
+  let best=null; let bestScore=-1;
+  for(const a of angles){
+    const rot=rotateCanvas(cnv,a);
+    if(!isYellowOrWhite(rot)) continue;
+    for(const inv of [false,true]){
+      const prep=preprocess(rot);
+      if(inv){ const ctx=prep.getContext('2d'); const img=ctx.getImageData(0,0,prep.width,prep.height); const d=img.data; for(let i=0;i<d.length;i+=4){ d[i]=255-d[i]; d[i+1]=255-d[i+1]; d[i+2]=255-d[i+2]; } ctx.putImageData(img,0,0); }
+      try{
+        const data=await ocrOnce(prep, baseHint);
+        const plate=strictExtractPlate(data.text||'');
+        const conf=data.confidence||0;
+        if(plate && conf>=60){
+          const score = conf;
+          if(score>bestScore){ bestScore=score; best={plate,conf,angle:a,inverted:inv,canvas:prep}; }
+        }
+      }catch(e){ /* ignore */ }
+    }
+  }
+  return best;
+}
+
+async function recognizeCanvasStrict(cnv, hint){
+  bar.style.width='10%'; bartxt.textContent=hint+' 10%';
+  const best = await recognizeSmart(cnv, hint);
+  if(best){ bar.style.width='100%'; bartxt.textContent='完成 100%（信心 '+Math.round(best.conf)+'）'; return best; }
+  bartxt.textContent='未匹配香港格式或信心過低'; bar.style.width='0%'; return null;
+}
 
 document.getElementById('autoFind').onclick=async()=>{
   if(!inCamera.files[0] && !inAlbum.files[0]){ alert('請先上載或選圖'); return; }
   statusEl.textContent='全自動尋找車牌中…';
   const cands=generateCandidates(img);
-  let best=''; let idx=0;
-  for(const r of cands){ idx++; const cut=getCropCanvasFrom(img,r); const prep=preprocess(cut); const t=await recognizeCanvas(prep,`尋牌 ${idx}/${cands.length}`); if(t){ best=t; break; } }
-  if(best){ outEl.innerHTML='結果：<span class="ok">'+best+'</span>'; addToList(best); statusEl.textContent='全自動尋牌完成 ✅'; } else { outEl.innerHTML='<span class="err">未能自動找到香港牌格式</span>'; statusEl.textContent='未能自動找到，請改用手動框選再試'; }
+  let win=null; let idx=0;
+  for(const r of cands){ idx++; const cut=getCropCanvasFrom(img,r); const got=await recognizeCanvasStrict(cut,`尋牌 ${idx}/${cands.length}`); if(got){ win=got; break; } }
+  if(win){ proc.width=win.canvas.width; proc.height=win.canvas.height; pctx.drawImage(win.canvas,0,0); outEl.innerHTML='結果：<span class="ok">'+win.plate+'</span> <span class="muted">(信心 '+Math.round(win.conf)+'，角度 '+win.angle+'°'+(win.inverted?', 反色':'')+')</span>'; addToList(win.plate); statusEl.textContent='全自動尋牌完成 ✅'; } else { outEl.innerHTML='<span class="err">未能自動找到（或信心不足）</span>'; statusEl.textContent='請改用手動框選「增強並辨識」再試'; }
 };
 
 document.getElementById('enhance').onclick=async()=>{
   if(!inCamera.files[0] && !inAlbum.files[0]){ alert('請先上載或拍照'); return; }
   const r={x:Math.round(crop.x/scale), y:Math.round(crop.y/scale), w:Math.round(crop.w/scale), h:Math.round(crop.h/scale)};
-  const cut=getCropCanvasFrom(img,r); const prep=preprocess(cut); const t=await recognizeCanvas(prep,'增強 OCR'); outEl.innerHTML=t? '結果：<span class="ok">'+t+'</span>':'<span class="err">未能讀取（未匹配香港格式）</span>'; if(t) addToList(t);
+  const cut=getCropCanvasFrom(img,r);
+  const got=await recognizeCanvasStrict(cut,'增強 OCR');
+  if(got){ proc.width=got.canvas.width; proc.height=got.canvas.height; pctx.drawImage(got.canvas,0,0); outEl.innerHTML='結果：<span class="ok">'+got.plate+'</span> <span class="muted">(信心 '+Math.round(got.conf)+')</span>'; addToList(got.plate); } else { outEl.innerHTML='<span class="err">未能讀取（未匹配香港格式或信心不足）</span>'; }
 };
 document.getElementById('raw').onclick=async()=>{
   if(!inCamera.files[0] && !inAlbum.files[0]){ alert('請先上載或拍照'); return; }
   const r={x:Math.round(crop.x/scale), y:Math.round(crop.y/scale), w:Math.round(crop.w/scale), h:Math.round(crop.h/scale)};
-  const cut=getCropCanvasFrom(img,r); const t=await recognizeCanvas(cut,'直接 OCR'); outEl.innerHTML=t? '結果：<span class="ok">'+t+'</span>':'<span class="err">未能讀取（未匹配香港格式）</span>'; if(t) addToList(t);
+  const cut=getCropCanvasFrom(img,r);
+  const got=await recognizeCanvasStrict(cut,'直接 OCR');
+  if(got){ proc.width=got.canvas.width; proc.height=got.canvas.height; pctx.drawImage(got.canvas,0,0); outEl.innerHTML='結果：<span class="ok">'+got.plate+'</span> <span class="muted">(信心 '+Math.round(got.conf)+')</span>'; addToList(got.plate); } else { outEl.innerHTML='<span class="err">未能讀取（未匹配香港格式或信心不足）</span>'; }
 };
 
 document.getElementById('copy').onclick=async()=>{ const txt=outEl.textContent.replace('結果：','').trim(); if(!txt){alert('沒有結果');return;} try{ await navigator.clipboard.writeText(txt); alert('已複製到剪貼簿'); }catch(e){ alert('複製失敗'); } };
 document.getElementById('reset').onclick=()=>{ [inCamera,inAlbum].forEach(i=>i.value=''); initCanvas(); pctx.clearRect(0,0,proc.width,proc.height); outEl.textContent=''; bar.style.width='0%'; bartxt.textContent='就緒'; logEl.textContent=''; };
 
-function initCanvas(){ canvas.width=Math.min(window.innerWidth-40,760); canvas.height=Math.round(canvas.width*0.6); const c2=canvas.getContext('2d'); c2.fillStyle='#f6f6f6'; c2.fillRect(0,0,canvas.width,canvas.height); c2.fillStyle='#777'; c2.fillText('上載圖片 → 按「全自動尋牌」；只保留香港牌格式',12,20); proc.width=canvas.width; proc.height=Math.round(canvas.height*0.45); }
+function initCanvas(){ canvas.width=Math.min(window.innerWidth-40,760); canvas.height=Math.round(canvas.width*0.6); const c2=canvas.getContext('2d'); c2.fillStyle='#f6f6f6'; c2.fillRect(0,0,canvas.width,canvas.height); c2.fillStyle='#777'; c2.fillText('上載圖片 → 按「全自動尋牌」；只保留香港牌格式＋信心達標',12,20); proc.width=canvas.width; proc.height=Math.round(canvas.height*0.45); }
 initCanvas();
 
+/* 批次模式進度條 */
+const bbar=document.getElementById('bbar'), bbartxt=document.getElementById('bbartxt'), batchStats=document.getElementById('batchStats');
 inBatch.addEventListener('change', async (e)=>{
   const files=[...e.target.files]; if(!files.length) return;
-  let ok=0, fail=0, idx=0; statusEl.textContent=`開始批次：共 ${files.length} 張…`;
+  let ok=0, fail=0, idx=0;
+  bbartxt.textContent=`開始批次：共 ${files.length} 張…`; bbar.style.width='0%';
   for(const f of files){ idx++; const url=URL.createObjectURL(f); const image=await new Promise(res=>{ const im=new Image(); im.onload=()=>res(im); im.src=url; }); URL.revokeObjectURL(url);
-    const cands=generateCandidates(image); let best='';
-    for(const r of cands){ const cut=getCropCanvasFrom(image,r); const prep=preprocess(cut); const t=await recognizeCanvas(prep,`批次 ${idx}/${files.length}`); if(t){ best=t; break; } }
-    if(best){ addToList(best); ok++; } else { fail++; }
-    statusEl.textContent=`進度：${idx}/${files.length}（成功 ${ok}，失敗 ${fail}）`;
-    await new Promise(r=>setTimeout(r,160));
+    const cands=generateCandidates(image); let win=null;
+    for(const r of cands){ const cut=getCropCanvasFrom(image,r); const got=await recognizeCanvasStrict(cut,`批次 ${idx}/${files.length}`); if(got){ win=got; break; } }
+    if(win){ addToList(win.plate); ok++; try{ if(navigator.vibrate) navigator.vibrate([20]); }catch(e){} }
+    else fail++;
+    const p=Math.round((idx/files.length)*100); bbar.style.width=p+'%'; bbartxt.textContent=`進度：${idx}/${files.length}（成功 ${ok}，失敗 ${fail}）`; batchStats.textContent=`成功：${ok}　失敗：${fail}`;
+    await new Promise(r=>setTimeout(r,80));
   }
-  bar.style.width='100%'; bartxt.textContent='批次完成'; alert(`批次完成：成功 ${ok}，失敗 ${fail}`);
+  bbartxt.textContent=`批次完成（成功 ${ok}，失敗 ${fail}）`; bbar.style.width='100%';
 });
 
 if ('serviceWorker' in navigator) { navigator.serviceWorker.register('./sw.js').catch(()=>{}); }
