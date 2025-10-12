@@ -5,28 +5,57 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#0a7b12">
-<title>車牌 OCR v4（修正版D：即時CDN，不用離線快取）</title>
+<title>車牌 OCR v6.1（全自動尋牌＋批次）</title>
 <style>
   :root{--border:#e4e4e4;--muted:#666}
-  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial;margin:18px;max-width:900px}
-  h1{font-size:1.4rem;margin:0 0 6px}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial;margin:14px;max-width:920px}
+  h1{font-size:1.35rem;margin:0 0 6px}
   .card{border:1px solid var(--border);border-radius:12px;padding:12px;margin-top:12px}
   label{display:block;margin:8px 0 6px;font-weight:600}
-  button{padding:10px 12px;border-radius:10px;border:1px solid #ccc;background:#fff}
+  button{padding:9px 12px;border-radius:10px;border:1px solid #ccc;background:#fff}
   .controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
   #canvas,#proc{max-width:100%;border:1px dashed #ddd;margin-top:8px}
   .muted{color:var(--muted);font-size:0.92rem;margin-top:6px}
   .result{white-space:pre-wrap;margin-top:10px;font-weight:700;font-size:1.1rem}
   .ok{color:#0a7b12}.err{color:#b10000}
   .row2{display:flex;gap:8px;flex-wrap:wrap}
-  .barwrap{position:relative;background:#f3f3f3;border:1px solid #e5e5e5;border-radius:10px;height:12px;overflow:hidden}
+  .barwrap{position:relative;background:#f3f3f3;border:1px solid #e5e5e5;border-radius:12px;height:12px;overflow:hidden}
   .bar{position:absolute;left:0;top:0;height:100%;width:0%;background:linear-gradient(90deg,#2ecc71,#27ae60)}
   .bartext{font-size:0.9rem;margin-top:6px;color:#333}
   details{margin-top:8px}
+  .flex{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  input[type=text]{padding:9px 10px;border:1px solid #d6d6d6;border-radius:10px;min-width:220px}
+  .list{border:1px solid var(--border);border-radius:10px;padding:8px;margin-top:6px;max-height:240px;overflow:auto;background:#fafafa}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+  .chip{background:#eef6ff;border:1px solid #cae1ff;padding:6px 10px;border-radius:999px;font-size:0.92rem}
+  .chip.sel{background:#d6f8e6;border-color:#9be4c1}
+  .small{font-size:0.86rem}
+  textarea{width:100%;min-height:90px;padding:8px;border:1px solid #ddd;border-radius:8px}
 </style>
 </head>
 <body>
-  <h1>車牌 OCR v4（修正版D）</h1>
+  <h1>車牌 OCR v6.1（全自動尋牌＋批次）</h1>
+
+  <div class="card">
+    <div class="flex">
+      <label style="margin:0">標題</label>
+      <input id="title" type="text" placeholder="例如：16/02 2315 牛頭角" />
+      <button id="btnNow">🕒 用現在時間</button>
+      <button id="btnCopyAll">📋 複製清單</button>
+      <button id="btnClear">🗑 清空清單</button>
+    </div>
+    <div class="muted">先揀車場 → 自動把「DD/MM HHmm + 車場名」填入標題；也可手改。</div>
+    <div>
+      <label class="small">車場清單（可編輯；每行一個名稱）</label>
+      <div class="chips" id="chips"></div>
+      <details>
+        <summary>✏️ 編輯車場清單</summary>
+        <textarea id="cpEdit"></textarea>
+        <div class="controls"><button id="cpSave">💾 儲存清單</button><button id="cpReset">↩️ 用預設</button></div>
+      </details>
+    </div>
+    <div class="list" id="listBox"></div>
+  </div>
 
   <div class="card">
     <label>OCR / 模型載入進度</label>
@@ -38,25 +67,28 @@
   <div class="card">
     <label>步驟 1：拍照或選圖</label>
     <div class="row2">
-      <button id="btnCamera">📸 拍照上載</button>
-      <button id="btnAlbum">🖼️ 從相簿選擇</button>
+      <button id="btnCamera">📸 拍照上載（單張）</button>
+      <button id="btnAlbum">🖼️ 從相簿選擇（單張）</button>
+      <button id="btnBatch">📂 批次上載（多張）</button>
     </div>
     <input id="inCamera" type="file" accept="image/*" capture="environment" style="display:none" />
     <input id="inAlbum" type="file" accept="image/*" style="display:none" />
-    <div class="muted">貼士：正面、光線足、車牌橫向 ≥40%，綠框貼邊。</div>
+    <input id="inBatch" type="file" accept="image/*" multiple style="display:none" />
+    <div class="muted">貼士：全自動模式會在不同高度/比例嘗試多個候選框，挑選最似車牌的一個去 OCR。</div>
 
-    <label>原圖 / 裁切</label>
+    <label>原圖 / 裁切（單張模式）</label>
     <canvas id="canvas"></canvas>
 
     <label>處理後（Canvas 預覽）</label>
     <canvas id="proc"></canvas>
 
     <div class="controls">
-      <button id="autocrop">自動框選</button>
-      <button id="enhance">增強並辨識</button>
-      <button id="raw">直接辨識</button>
-      <button id="copy">複製結果</button>
-      <button id="reset">重設</button>
+      <button id="autocrop">自動框選（置中）</button>
+      <button id="autoFind">🔎 全自動尋牌＋辨識＋入清單</button>
+      <button id="enhance">增強並辨識＋入清單</button>
+      <button id="raw">直接辨識＋入清單</button>
+      <button id="copy">複製單一結果</button>
+      <button id="reset">重設畫面</button>
     </div>
 
     <div id="status" class="muted">就緒</div>
@@ -64,10 +96,95 @@
   </div>
 
 <script>
+// ====== 工具：時間 ======
+function pad(n){return n<10?('0'+n):n}
+function nowTitleWith(name){
+  const d=new Date();
+  return `${pad(d.getDate())}/${pad(d.getMonth()+1)} ${pad(d.getHours())}${pad(d.getMinutes())} ${name||''}`.trim();
+}
+
+// ====== 車場清單（可編輯＋本地儲存） ======
+const DEFAULT_CP = ['牛頭角','新蒲崗','觀塘','葵芳','荃灣','旺角','油麻地','九龍灣','尖沙咀','中環','將軍澳'];
+const LS_CP='plateocr_v61_cp';
+let CP = JSON.parse(localStorage.getItem(LS_CP) || 'null') || DEFAULT_CP.slice();
+
+const chipsDom = document.getElementById('chips');
+const cpEdit = document.getElementById('cpEdit');
+function renderChips(){
+  chipsDom.innerHTML='';
+  CP.forEach(name=>{
+    const b=document.createElement('button');
+    b.className='chip';
+    b.textContent=name;
+    b.onclick=()=>{
+      document.getElementById('title').value = nowTitleWith(name);
+      localStorage.setItem('plateocr_v61_title', document.getElementById('title').value);
+      renderList();
+      [...chipsDom.children].forEach(x=>x.classList.remove('sel'));
+      b.classList.add('sel');
+    };
+    chipsDom.appendChild(b);
+  });
+  cpEdit.value = CP.join('\n');
+}
+renderChips();
+document.getElementById('cpSave').onclick=()=>{
+  const lines = cpEdit.value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+  CP = lines.length? lines : DEFAULT_CP.slice();
+  localStorage.setItem(LS_CP, JSON.stringify(CP));
+  renderChips();
+};
+document.getElementById('cpReset').onclick=()=>{
+  CP = DEFAULT_CP.slice();
+  localStorage.setItem(LS_CP, JSON.stringify(CP));
+  renderChips();
+};
+
+// ====== 清單持久化 ======
+const listBox=document.getElementById('listBox');
+const LS_KEY='plateocr_v61_list';
+const TITLE_KEY='plateocr_v61_title';
+let list=JSON.parse(localStorage.getItem(LS_KEY)||'[]');
+function renderList(){
+  const lines=list.map(x=>x.text).join('\n');
+  listBox.textContent = (document.getElementById('title').value||'(未命名)') + '\n' + (lines||'(尚未新增)');
+}
+function addToList(plate){
+  if(!plate) return;
+  list.push({text:plate,ts:Date.now()});
+  localStorage.setItem(LS_KEY, JSON.stringify(list));
+  renderList();
+}
+function clearList(){
+  list=[]; localStorage.removeItem(LS_KEY); renderList();
+}
+
+// ====== 初始化標題 ======
+(function initTitle(){
+  const t = localStorage.getItem(TITLE_KEY) || nowTitleWith('');
+  const titleEl=document.getElementById('title');
+  titleEl.value = t;
+  titleEl.addEventListener('input', ()=>localStorage.setItem(TITLE_KEY, titleEl.value));
+  renderList();
+})();
+document.getElementById('btnNow').onclick=()=>{
+  const titleEl=document.getElementById('title');
+  titleEl.value = nowTitleWith('');
+  localStorage.setItem(TITLE_KEY,titleEl.value);
+  renderList();
+};
+document.getElementById('btnClear').onclick = ()=>{ if(confirm('確定清空清單？')) clearList(); };
+document.getElementById('btnCopyAll').onclick = async ()=>{
+  const text=listBox.textContent; try{ await navigator.clipboard.writeText(text); alert('已複製整份清單'); }catch(e){ alert('複製失敗'); }
+};
+
+// ====== 既有 OCR（CDN）======
 const inCamera=document.getElementById('inCamera');
 const inAlbum=document.getElementById('inAlbum');
+const inBatch=document.getElementById('inBatch');
 const btnCamera=document.getElementById('btnCamera');
 const btnAlbum=document.getElementById('btnAlbum');
+const btnBatch=document.getElementById('btnBatch');
 const canvas=document.getElementById('canvas'); const ctx=canvas.getContext('2d');
 const proc=document.getElementById('proc'); const pctx=proc.getContext('2d');
 const bar=document.getElementById('bar'); const bartxt=document.getElementById('bartxt');
@@ -79,6 +196,7 @@ let crop={x:0,y:0,w:0,h:0,drag:false};
 
 btnCamera.onclick=()=>inCamera.click();
 btnAlbum.onclick=()=>inAlbum.click();
+btnBatch.onclick=()=>inBatch.click();
 
 [inCamera,inAlbum].forEach(inp=>{
   inp.addEventListener('change',e=>{
@@ -92,7 +210,7 @@ btnAlbum.onclick=()=>inAlbum.click();
       crop.x=(canvas.width-crop.w)/2; crop.y=(canvas.height-crop.h)/2;
       draw();
       URL.revokeObjectURL(url);
-      outEl.textContent=''; statusEl.textContent='影像已載入：拖綠框至車牌，再按「增強並辨識」';
+      outEl.textContent=''; statusEl.textContent='影像已載入（單張）：可用「🔎 全自動尋牌」直入清單';
       pctx.clearRect(0,0,proc.width,proc.height);
     };
     img.src=url;
@@ -126,25 +244,51 @@ window.addEventListener('pointermove',ev=>{
 });
 window.addEventListener('pointerup',()=>{ crop.drag=false; });
 
-function getCropCanvas(){
-  const sx=Math.round(crop.x/scale), sy=Math.round(crop.y/scale);
-  const sw=Math.round(crop.w/scale), sh=Math.round(crop.h/scale);
-  const tmp=document.createElement('canvas'); tmp.width=sw; tmp.height=sh;
-  const t=tmp.getContext('2d'); t.drawImage(img,sx,sy,sw,sh,0,0,sw,sh);
-  const maxSide=1100; if (tmp.width>maxSide || tmp.height>maxSide){
-    const k=Math.min(maxSide/tmp.width, maxSide/tmp.height);
-    const c2=document.createElement('canvas'); c2.width=Math.round(tmp.width*k); c2.height=Math.round(tmp.height*k);
-    c2.getContext('2d').drawImage(tmp,0,0,c2.width,c2.height);
-    return c2;
-  }
+function getCropCanvasFrom(img, w, h, rect){
+  const tmp=document.createElement('canvas'); tmp.width=rect.w; tmp.height=rect.h;
+  tmp.getContext('2d').drawImage(img, rect.x, rect.y, rect.w, rect.h, 0,0,rect.w,rect.h);
   return tmp;
+}
+
+function generateCandidates(img){
+  // 依香港車牌比例（橫向 4:1 ~ 5:1；縱向 1.5:1 ~ 2:1）產生多個候選框
+  const W=img.naturalWidth, H=img.naturalHeight;
+  const cand=[];
+  const arList=[4.5,4.0,5.0]; // 橫向比例
+  const heightFrac=[0.16,0.2,0.24]; // 站在畫面高度的比例
+  const rows=[0.38,0.48,0.58]; // 中線位置（比例）
+  for(const ar of arList){
+    for(const hf of heightFrac){
+      const h=Math.round(H*hf), w=Math.round(h*ar);
+      for(const cy of rows){
+        const y=Math.max(0, Math.min(H-h, Math.round(H*cy - h/2)));
+        const x=Math.max(0, Math.min(W-w, Math.round(W*0.5 - w/2)));
+        cand.push({x,y,w,h});
+      }
+    }
+  }
+  // 加入左右偏移版本
+  const shift=[-0.18,0,0.18];
+  const baseH=Math.round(H*0.20), baseW=Math.round(baseH*4.5);
+  for(const sx of shift){
+    const w=baseW, h=baseH;
+    const x=Math.max(0, Math.min(W-w, Math.round(W*(0.5+sx) - w/2)));
+    const y=Math.max(0, Math.min(H-h, Math.round(H*0.5 - h/2)));
+    cand.push({x,y,w,h});
+  }
+  // 去重
+  const uniq=[], seen=new Set();
+  for(const r of cand){
+    const k=[r.x,r.y,r.w,r.h].join(',');
+    if(!seen.has(k)){ seen.add(k); uniq.push(r); }
+  }
+  return uniq;
 }
 
 function preprocess(cnv){
   const scaleUp=2.0;
   const out=document.createElement('canvas'); out.width=Math.round(cnv.width*scaleUp); out.height=Math.round(cnv.height*scaleUp);
   const octx=out.getContext('2d'); octx.imageSmoothingEnabled=true; octx.drawImage(cnv,0,0,out.width,out.height);
-
   let imgd=octx.getImageData(0,0,out.width,out.height), d=imgd.data;
   let mn=255,mx=0;
   for(let i=0;i<d.length;i+=4){ const y=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2]; d[i]=d[i+1]=d[i+2]=y; if(y<mn)mn=y; if(y>mx)mx=y; }
@@ -176,7 +320,7 @@ async function recognizeCanvas(cnv, hint){
   bar.style.width='10%'; bartxt.textContent=hint+' 10%';
   const blob=await new Promise(res=>cnv.toBlob(b=>res(b),'image/png',0.92));
   try{
-    const { data:{ text } } = await Tesseract.recognize(
+    const { data } = await Tesseract.recognize(
       blob, 'eng',
       {
         workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/worker.min.js',
@@ -189,27 +333,70 @@ async function recognizeCanvas(cnv, hint){
       }
     );
     bar.style.width='100%'; bartxt.textContent='完成 100%';
-    return postFixPlate(text||'');
+    const text = data.text || '';
+    const conf = (typeof data.confidence==='number')? data.confidence : 0;
+    return { text: postFixPlate(text), conf };
   }catch(err){
     bartxt.textContent='錯誤：'+err.message; bar.style.width='0%'; log('ERROR: '+(err.stack||err));
-    return '';
+    return { text:'', conf:0 };
   }
 }
 
+// ====== 全自動尋牌（單張）======
+document.getElementById('autoFind').onclick=async()=>{
+  if(!inCamera.files[0] && !inAlbum.files[0]){ alert('請先上載或選一張相'); return; }
+  statusEl.textContent='全自動尋找車牌中…';
+  const cands = generateCandidates(img);
+  let best={txt:'', score:0, cnv:null, rect:null};
+  let idx=0;
+  for(const r of cands){
+    idx++;
+    const cnv = getCropCanvasFrom(img, img.naturalWidth, img.naturalHeight, r);
+    const prep = preprocess(cnv);
+    const {text, conf} = await recognizeCanvas(prep, `尋牌 ${idx}/${cands.length}`);
+    // 打分：正則命中 + 置信度
+    const matched = /^[A-Z]{1,3}\s?\d{1,4}$/.test(text);
+    const score = conf + (matched? 30: 0);
+    if(score > best.score && text){
+      best={txt:text, score, cnv:prep, rect:r};
+    }
+  }
+  if(best.txt){
+    proc.width=best.cnv.width; proc.height=best.cnv.height; pctx.drawImage(best.cnv,0,0);
+    outEl.innerHTML='結果：<span class="ok">'+best.txt+'</span>';
+    addToList(best.txt);
+    statusEl.textContent='全自動尋牌完成 ✅';
+    // 在原圖上畫出最佳框
+    crop = {...best.rect, drag:false};
+    scale = fit(canvas, img.naturalWidth, img.naturalHeight);
+    crop.x = Math.round(best.rect.x*scale); crop.y=Math.round(best.rect.y*scale);
+    crop.w = Math.round(best.rect.w*scale); crop.h=Math.round(best.rect.h*scale);
+    draw();
+  }else{
+    outEl.innerHTML='<span class="err">未能自動找到車牌</span>';
+    statusEl.textContent='未能自動找到，請改用手動框選再試';
+  }
+};
+
+// ====== 單張：人工控制 ======
 document.getElementById('enhance').onclick=async()=>{
   if(!inCamera.files[0] && !inAlbum.files[0]){ alert('請先上載或拍照'); return; }
-  const cropCnv=getCropCanvas();
-  const prep=preprocess(cropCnv);
+  const r={x:Math.round(crop.x/scale), y:Math.round(crop.y/scale), w:Math.round(crop.w/scale), h:Math.round(crop.h/scale)};
+  const cut=getCropCanvasFrom(img, img.naturalWidth, img.naturalHeight, r);
+  const prep=preprocess(cut);
   proc.width=prep.width; proc.height=prep.height; pctx.drawImage(prep,0,0);
-  const t=await recognizeCanvas(prep,'增強 OCR');
-  outEl.innerHTML=t? '結果：<span class="ok">'+t+'</span>':'<span class="err">未能讀取</span>';
+  const {text}=await recognizeCanvas(prep,'增強 OCR');
+  outEl.innerHTML=text? '結果：<span class="ok">'+text+'</span>':'<span class="err">未能讀取</span>';
+  if(text) addToList(text);
 };
 
 document.getElementById('raw').onclick=async()=>{
   if(!inCamera.files[0] && !inAlbum.files[0]){ alert('請先上載或拍照'); return; }
-  const cropCnv=getCropCanvas();
-  const t=await recognizeCanvas(cropCnv,'直接 OCR');
-  outEl.innerHTML=t? '結果：<span class="ok">'+t+'</span>':'<span class="err">未能讀取</span>';
+  const r={x:Math.round(crop.x/scale), y:Math.round(crop.y/scale), w:Math.round(crop.w/scale), h:Math.round(crop.h/scale)};
+  const cut=getCropCanvasFrom(img, img.naturalWidth, img.naturalHeight, r);
+  const {text}=await recognizeCanvas(cut,'直接 OCR');
+  outEl.innerHTML=text? '結果：<span class="ok">'+text+'</span>':'<span class="err">未能讀取</span>';
+  if(text) addToList(text);
 };
 
 document.getElementById('copy').onclick=async()=>{
@@ -227,11 +414,41 @@ document.getElementById('autocrop').onclick=()=>{
 
 function initCanvas(){
   canvas.width=Math.min(window.innerWidth-40,760); canvas.height=Math.round(canvas.width*0.6);
-  ctx.fillStyle='#f6f6f6'; ctx.fillRect(0,0,canvas.width,canvas.height);
-  ctx.fillStyle='#777'; ctx.fillText('上載相片或拍照 → 綠框圈住車牌 → 「增強並辨識」',12,20);
+  const ctx2=canvas.getContext('2d');
+  ctx2.fillStyle='#f6f6f6'; ctx2.fillRect(0,0,canvas.width,canvas.height);
+  ctx2.fillStyle='#777'; ctx2.fillText('全自動模式：上載圖片 → 按「🔎 全自動尋牌」',12,20);
   proc.width=canvas.width; proc.height=Math.round(canvas.height*0.45);
 }
 initCanvas();
+
+// ====== 批次模式（改為全自動尋牌） ======
+inBatch.addEventListener('change', async (e)=>{
+  const files=[...e.target.files];
+  if(!files.length) return;
+  let ok=0, fail=0, idx=0;
+  statusEl.textContent=`開始批次（全自動）：共 ${files.length} 張…`;
+  for(const f of files){
+    idx++;
+    const url = URL.createObjectURL(f);
+    const image = await new Promise(res=>{ const im=new Image(); im.onload=()=>res(im); im.src=url; });
+    URL.revokeObjectURL(url);
+    const cands = generateCandidates(image);
+    let best={txt:'', score:0, cnv:null};
+    for(const r of cands){
+      const cut=getCropCanvasFrom(image, image.naturalWidth, image.naturalHeight, r);
+      const prep=preprocess(cut);
+      const {text, conf}=await recognizeCanvas(prep,`批次尋牌 ${idx}/${files.length}`);
+      const matched=/^[A-Z]{1,3}\s?\d{1,4}$/.test(text);
+      const score=conf+(matched?30:0);
+      if(score>best.score && text){ best={txt:text, score, cnv:prep}; }
+    }
+    if(best.txt){ addToList(best.txt); ok++; } else { fail++; }
+    statusEl.textContent=`進度：${idx}/${files.length}（成功 ${ok}，失敗 ${fail}）`;
+    await new Promise(r=>setTimeout(r,160));
+  }
+  bar.style.width='100%'; bartxt.textContent='批次完成';
+  alert(`批次完成：成功 ${ok}，失敗 ${fail}`);
+});
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch(()=>{});
