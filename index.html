@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#0a7b12">
-<title>車牌 OCR v4 一鍵離線（修正版C）</title>
+<title>車牌 OCR v4（修正版D：即時CDN，不用離線快取）</title>
 <style>
   :root{--border:#e4e4e4;--muted:#666}
   body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial;margin:18px;max-width:900px}
@@ -26,12 +26,12 @@
 </style>
 </head>
 <body>
-  <h1>車牌 OCR v4 一鍵離線（修正版C）</h1>
+  <h1>車牌 OCR v4（修正版D）</h1>
 
   <div class="card">
-    <label>OCR / 模型下載進度</label>
+    <label>OCR / 模型載入進度</label>
     <div class="barwrap"><div id="bar" class="bar"></div></div>
-    <div id="bartxt" class="bartext">就緒（首次會自動下載模型 ~10MB）</div>
+    <div id="bartxt" class="bartext">就緒（即時從 CDN 載入模型）</div>
     <details><summary>查看詳細日誌</summary><pre id="log" style="white-space:pre-wrap"></pre></details>
   </div>
 
@@ -172,29 +172,16 @@ function postFixPlate(txt){
   return s;
 }
 
-async function ensureModels(){
-  if (!navigator.serviceWorker?.controller){ bartxt.textContent='啟動離線引擎中…'; return; }
-  return new Promise(res=>{
-    const ch = new MessageChannel();
-    ch.port1.onmessage = (e)=>{
-      if (e.data?.type==='prefetch-done'){ bartxt.textContent='模型已就緒'; res(); }
-      else if (e.data?.type==='prefetch-progress'){ const p=e.data.progress; bar.style.width=p+'%'; bartxt.textContent='下載模型 '+p+'%'; }
-    };
-    navigator.serviceWorker.controller.postMessage({type:'prefetch-models'}, [ch.port2]);
-  });
-}
-
 async function recognizeCanvas(cnv, hint){
-  await ensureModels();
   bar.style.width='10%'; bartxt.textContent=hint+' 10%';
   const blob=await new Promise(res=>cnv.toBlob(b=>res(b),'image/png',0.92));
   try{
     const { data:{ text } } = await Tesseract.recognize(
       blob, 'eng',
       {
-        workerPath: 'local/worker.min.js',
-        corePath:   'local/tesseract-core.wasm.js',
-        langPath:   'local',
+        workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/worker.min.js',
+        corePath:   'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.0.0/tesseract-core.wasm.js',
+        langPath:   'https://tessdata.projectnaptha.com/4.0.0',
         tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ',
         preserve_interword_spaces:'1',
         tessedit_pageseg_mode:'7',
@@ -246,9 +233,8 @@ function initCanvas(){
 }
 initCanvas();
 
-// 註冊 SW
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js').then(()=>console.log('sw ok')).catch(()=>{});
+  navigator.serviceWorker.register('./sw.js').catch(()=>{});
 }
 </script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/tesseract.min.js"></script>
