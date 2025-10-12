@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#0a7b12">
-<title>車牌 OCR v4 一鍵離線（修正版B：正確作用域路徑）</title>
+<title>車牌 OCR v4 一鍵離線（修正版C）</title>
 <style>
   :root{--border:#e4e4e4;--muted:#666}
   body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial;margin:18px;max-width:900px}
@@ -22,10 +22,11 @@
   .barwrap{position:relative;background:#f3f3f3;border:1px solid #e5e5e5;border-radius:10px;height:12px;overflow:hidden}
   .bar{position:absolute;left:0;top:0;height:100%;width:0%;background:linear-gradient(90deg,#2ecc71,#27ae60)}
   .bartext{font-size:0.9rem;margin-top:6px;color:#333}
+  details{margin-top:8px}
 </style>
 </head>
 <body>
-  <h1>車牌 OCR v4 一鍵離線（修正版B）</h1>
+  <h1>車牌 OCR v4 一鍵離線（修正版C）</h1>
 
   <div class="card">
     <label>OCR / 模型下載進度</label>
@@ -183,30 +184,23 @@ async function ensureModels(){
   });
 }
 
-async function ocrFromCanvas(cnv, hint){
+async function recognizeCanvas(cnv, hint){
   await ensureModels();
   bar.style.width='10%'; bartxt.textContent=hint+' 10%';
   const blob=await new Promise(res=>cnv.toBlob(b=>res(b),'image/png',0.92));
-
-  const worker = Tesseract.createWorker({
-    // **改為相對路徑**：確保在 GitHub Pages 子路徑下生效（/plate-ocr/）
-    workerPath:   'local/worker.min.js',
-    corePath:     'local/tesseract-core.wasm.js',
-    langPath:     'local',
-    logger: m => { if(m.progress){ const p=Math.max(10, Math.round(m.progress*100)); bar.style.width=p+'%'; bartxt.textContent=(m.status||hint)+' '+p+'%'; } log(JSON.stringify(m)); }
-  });
-
-  const timeout = new Promise((_,rej)=>setTimeout(()=>rej(new Error('OCR 超時')), 60000));
-
   try{
-    const run = (async ()=>{
-      await worker.load(); await worker.loadLanguage('eng'); await worker.initialize('eng');
-      await worker.setParameters({ tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ', preserve_interword_spaces:'1', tessedit_pageseg_mode:'7' });
-      const {data:{text}}=await worker.recognize(blob);
-      await worker.terminate();
-      return text;
-    })();
-    const text = await Promise.race([run, timeout]);
+    const { data:{ text } } = await Tesseract.recognize(
+      blob, 'eng',
+      {
+        workerPath: 'local/worker.min.js',
+        corePath:   'local/tesseract-core.wasm.js',
+        langPath:   'local',
+        tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ',
+        preserve_interword_spaces:'1',
+        tessedit_pageseg_mode:'7',
+        logger: m => { if(m.progress){ const p=Math.max(10, Math.round(m.progress*100)); bar.style.width=p+'%'; bartxt.textContent=(m.status||hint)+' '+p+'%'; } log(JSON.stringify(m)); }
+      }
+    );
     bar.style.width='100%'; bartxt.textContent='完成 100%';
     return postFixPlate(text||'');
   }catch(err){
@@ -220,14 +214,14 @@ document.getElementById('enhance').onclick=async()=>{
   const cropCnv=getCropCanvas();
   const prep=preprocess(cropCnv);
   proc.width=prep.width; proc.height=prep.height; pctx.drawImage(prep,0,0);
-  const t=await ocrFromCanvas(prep,'增強 OCR');
+  const t=await recognizeCanvas(prep,'增強 OCR');
   outEl.innerHTML=t? '結果：<span class="ok">'+t+'</span>':'<span class="err">未能讀取</span>';
 };
 
 document.getElementById('raw').onclick=async()=>{
   if(!inCamera.files[0] && !inAlbum.files[0]){ alert('請先上載或拍照'); return; }
   const cropCnv=getCropCanvas();
-  const t=await ocrFromCanvas(cropCnv,'直接 OCR');
+  const t=await recognizeCanvas(cropCnv,'直接 OCR');
   outEl.innerHTML=t? '結果：<span class="ok">'+t+'</span>':'<span class="err">未能讀取</span>';
 };
 
