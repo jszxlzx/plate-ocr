@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#0a7b12">
-<title>車牌 OCR v4（離線版：本地模型 + 進度條）</title>
+<title>車牌 OCR v4 一鍵離線（首開下載模型 → 之後離線可用）</title>
 <style>
   :root{--border:#e4e4e4;--muted:#666}
   body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial;margin:18px;max-width:900px}
@@ -17,7 +17,7 @@
   #canvas,#proc{max-width:100%;border:1px dashed #ddd;margin-top:8px}
   .muted{color:var(--muted);font-size:0.92rem;margin-top:6px}
   .result{white-space:pre-wrap;margin-top:10px;font-weight:700;font-size:1.1rem}
-  .ok{color:#0a7b12}.warn{color:#9a6700}.err{color:#b10000}
+  .ok{color:#0a7b12}.err{color:#b10000}
   .row2{display:flex;gap:8px;flex-wrap:wrap}
   .barwrap{position:relative;background:#f3f3f3;border:1px solid #e5e5e5;border-radius:10px;height:12px;overflow:hidden}
   .bar{position:absolute;left:0;top:0;height:100%;width:0%;background:linear-gradient(90deg,#2ecc71,#27ae60)}
@@ -27,12 +27,12 @@
 </style>
 </head>
 <body>
-  <h1>車牌 OCR v4（離線 / 本地模型）</h1>
+  <h1>車牌 OCR v4 一鍵離線</h1>
 
   <div class="card">
-    <label>OCR 進度</label>
+    <label>OCR / 模型下載進度</label>
     <div class="barwrap"><div id="bar" class="bar"></div></div>
-    <div id="bartxt" class="bartext">就緒（首次請先放置本地模型檔；見下方說明）</div>
+    <div id="bartxt" class="bartext">就緒（首次開啟會自動下載模型 ~10MB）</div>
     <details><summary>查看詳細日誌</summary><pre id="log" style="white-space:pre-wrap"></pre></details>
   </div>
 
@@ -62,29 +62,9 @@
 
     <div id="status" class="muted">就緒</div>
     <div id="out" class="result"></div>
-    <div class="muted">後處理：<code>O↔0</code>、<code>I/L↔1</code>、<code>B↔8</code>、<code>S↔5</code>；匹配 <code>^[A-Z]{1,3}\s?\d{1,4}$</code>。</div>
-
-    <details style="margin-top:10px">
-      <summary>📥 首次使用：放置本地模型檔（必需）</summary>
-      <ol>
-        <li>把 <code>tesseract-core.wasm.js</code> 和 <code>tesseract-core.wasm</code> 放入 <code>/wasm/</code> 資料夾。</li>
-        <li>把 <code>eng.traineddata</code> 放入 <code>/lang/</code> 資料夾。</li>
-        <li>把 <code>worker.min.js</code> 放入 <code>/js/</code> 資料夾。</li>
-        <li>檔名/路徑必須與上述完全一致。</li>
-      </ol>
-    </details>
   </div>
 
-  <script>
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', ()=>{
-    navigator.serviceWorker.register('./sw.js').catch(()=>{});
-  });
-}
-  </script>
-
-  <script>
-// 主要程式（同 v3a，改為本地路徑）
+<script>
 const inCamera=document.getElementById('inCamera');
 const inAlbum=document.getElementById('inAlbum');
 const btnCamera=document.getElementById('btnCamera');
@@ -93,11 +73,10 @@ const canvas=document.getElementById('canvas'); const ctx=canvas.getContext('2d'
 const proc=document.getElementById('proc'); const pctx=proc.getContext('2d');
 const bar=document.getElementById('bar'); const bartxt=document.getElementById('bartxt');
 const statusEl=document.getElementById('status'); const outEl=document.getElementById('out'); const logEl=document.getElementById('log');
+function log(s){ logEl.textContent += s + '\\n'; }
 
 let img=new Image(), imgW=0,imgH=0, scale=1;
 let crop={x:0,y:0,w:0,h:0,drag:false};
-
-function log(s){ logEl.textContent += s + '\n'; }
 
 btnCamera.onclick=()=>inCamera.click();
 btnAlbum.onclick=()=>inAlbum.click();
@@ -194,18 +173,39 @@ function postFixPlate(txt){
   return s;
 }
 
+async function ensureModels(){
+  if (!navigator.serviceWorker?.controller){
+    bartxt.textContent='正在啟動離線引擎（請稍等 1-2 秒）'; return;
+  }
+  // ping SW to prefetch
+  bartxt.textContent='檢查/下載模型檔中…';
+  return new Promise(res=>{
+    const ch = new MessageChannel();
+    ch.port1.onmessage = (e)=>{
+      if (e.data && e.data.type==='prefetch-done'){
+        bartxt.textContent='模型已就緒，可離線使用'; res();
+      } else if (e.data && e.data.type==='prefetch-progress'){
+        const p=e.data.progress; bar.style.width=p+'%'; bartxt.textContent='下載模型 '+p+'%';
+      }
+    };
+    navigator.serviceWorker.controller.postMessage({type:'prefetch-models'}, [ch.port2]);
+  });
+}
+
 async function ocrFromCanvas(cnv, hint){
+  await ensureModels();
   bar.style.width='10%'; bartxt.textContent=hint+' 10%';
   const blob=await new Promise(res=>cnv.toBlob(b=>res(b),'image/png',0.92));
 
   const worker = Tesseract.createWorker({
-    workerPath:   './js/worker.min.js',
-    corePath:     './wasm/tesseract-core.wasm.js',
-    langPath:     './lang',
+    // 使用本地虛擬路徑；由 SW 提供實體內容（已預先緩存）
+    workerPath:   '/local/worker.min.js',
+    corePath:     '/local/tesseract-core.wasm.js',
+    langPath:     '/local',
     logger: m => { if(m.progress){ const p=Math.max(10, Math.round(m.progress*100)); bar.style.width=p+'%'; bartxt.textContent=(m.status||hint)+' '+p+'%'; } log(JSON.stringify(m)); }
   });
 
-  const timeout = new Promise((_,rej)=>setTimeout(()=>rej(new Error('OCR 超時（模型檔未放好 / 權限問題）')), 60000));
+  const timeout = new Promise((_,rej)=>setTimeout(()=>rej(new Error('OCR 超時')), 60000));
 
   try{
     const run = (async ()=>{
@@ -260,7 +260,13 @@ function initCanvas(){
   proc.width=canvas.width; proc.height=Math.round(canvas.height*0.45);
 }
 initCanvas();
-  </script>
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/tesseract.min.js"></script> <!-- 備援：如本地 worker 未放好 -->
+
+// 註冊 SW
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').then(()=>console.log('sw ok')).catch(()=>{});
+}
+</script>
+<!-- Tesseract 主程式（API 定義） -->
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/tesseract.min.js"></script>
 </body>
 </html>
