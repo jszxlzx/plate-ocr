@@ -2,239 +2,40 @@
 <!doctype html>
 <html lang="zh-HK"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="manifest" href="manifest.webmanifest">
-<title>車牌 OCR v6.6c（強力自動＋詳細日誌＋CDN備援）</title>
+<title>車牌 OCR v6.6d（強力自動＋詳細日誌＋車場清單）</title>
 <style>
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial;margin:14px;max-width:980px}
-h1{font-size:1.2rem;margin:0 0 8px}
 .card{border:1px solid #e5e5e5;border-radius:12px;padding:12px;margin-top:12px}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 button{padding:9px 12px;border-radius:10px;border:1px solid #ccc;background:#fff}
-#canvas,#proc{max-width:100%;border:1px dashed #ddd;margin-top:6px}
-.barwrap{height:12px;border:1px solid #e4e4e4;border-radius:12px;background:#f6f6f6;overflow:hidden}
-.bar{height:100%;background:linear-gradient(90deg,#2ecc71,#27ae60);width:0%}
-.muted{color:#666;font-size:.9rem}
-.result{white-space:pre-wrap;margin-top:6px}
-.log{background:#0b1022;color:#bfe7ff;border-radius:10px;padding:8px;max-height:220px;overflow:auto;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.78rem}
-.list{border:1px solid #e5e5e5;border-radius:10px;padding:8px;background:#fafafa;max-height:260px;overflow:auto}
+textarea{width:100%}
 </style>
 </head><body>
-<h1>車牌 OCR v6.6c（強力自動＋詳細日誌＋CDN備援）</h1>
-
+<h1>車牌 OCR v6.6d（強力自動＋詳細日誌＋車場清單）</h1>
 <div class="card">
   <div class="row">
-    <label>標題</label><input id="title" style="padding:8px;border:1px solid #ddd;border-radius:10px;min-width:220px">
+    <label>標題</label><input id="title">
     <button id="btnNow">🕒 用現在時間</button>
-    <button id="btnCopyAll">📋 複製清單</button>
-    <button id="btnClear">🗑 清空清單</button>
-    <button id="btnTxt">⬇️ 下載 TXT</button>
-    <button id="btnCsv">⬇️ 下載 CSV</button>
   </div>
-  <div class="row">
-    <label style="font-weight:500"><input type="checkbox" id="spaceToggle"> 在字母與數字之間加空格（HA 2816）</label>
-    <label style="font-weight:500"><input type="checkbox" id="soundToggle" checked> 成功提示聲</label>
-    <label style="font-weight:500"><input type="checkbox" id="fastBatchToggle"> 快速批次</label>
-    <label style="font-weight:500"><input type="checkbox" id="strongToggle" checked> 強力自動（更密網格＋更闊角度）</label>
-    <label style="font-weight:500"><input type="checkbox" id="debugToggle" checked> 顯示詳細日誌</label>
-  </div>
-  <div class="list" id="listBox"></div>
+  <div class="row" id="lotsBox" style="margin-top:8px;"></div>
+  <details style="margin-top:6px;">
+    <summary>✏️ 編輯車場清單</summary>
+    <div class="row" style="margin-top:6px;">
+      <textarea id="lotsEdit" rows="2"></textarea>
+      <button id="saveLots">儲存清單</button>
+    </div>
+  </details>
 </div>
-
-<div class="card">
-  <label>OCR / 模型載入進度</label>
-  <div class="barwrap"><div id="bar" class="bar"></div></div>
-  <div id="bartxt" class="muted">就緒（會自動嘗試兩個 CDN）</div>
-  <details open><summary>查看詳細日誌</summary><pre id="log" class="log"></pre></details>
-</div>
-
-<div class="card">
-  <label>步驟 1：拍照或選圖</label>
-  <div class="row">
-    <button id="btnCamera">📸 拍照上載（單張）</button>
-    <button id="btnAlbum">🖼️ 從相簿選擇（單張）</button>
-    <button id="btnBatch">📂 批次上載（多張）</button>
-  </div>
-  <input id="inCamera" type="file" accept="image/*" capture="environment" style="display:none">
-  <input id="inAlbum" type="file" accept="image/*" style="display:none">
-  <input id="inBatch" type="file" accept="image/*" multiple style="display:none">
-
-  <div class="muted">全自動會嘗試多角度＋多比例候選框；失敗可改用手動框「增強並辨識」。</div>
-
-  <label>原圖 / 裁切（單張）</label>
-  <canvas id="canvas"></canvas>
-  <label>處理後（Canvas 預覽）</label>
-  <canvas id="proc"></canvas>
-
-  <div class="row">
-    <button id="autoFind">🔎 全自動尋牌＋入清單</button>
-    <button id="enhance">增強並辨識＋入清單（手動框）</button>
-    <button id="raw">直接辨識＋入清單（手動框）</button>
-    <button id="copy">複製單一結果</button>
-    <button id="reset">重設畫面</button>
-  </div>
-  <div id="status" class="muted">就緒</div>
-  <div id="out" class="result"></div>
-</div>
-
-<div class="card">
-  <label>批次進度</label>
-  <div class="barwrap"><div id="bbar" class="bar"></div></div>
-  <div id="bbartxt" class="muted">未開始</div>
-</div>
-
 <script>
 function pad(n){return n<10?('0'+n):n}
-function nowTitle(){ const d=new Date(); return `${pad(d.getDate())}/${pad(d.getMonth()+1)} ${pad(d.getHours())}${pad(d.getMinutes())}`; }
-const logEl=document.getElementById('log');
-function log(msg){ const ts=new Date().toLocaleTimeString(); const line=`[${ts}] ${msg}`; if(document.getElementById('debugToggle').checked){ logEl.textContent += line + "\n"; logEl.scrollTop = logEl.scrollHeight; } console.debug(line); }
-const listBox=document.getElementById('listBox'); let list=[];
-function renderList(){ const title=document.getElementById('title').value||'(未命名)'; listBox.textContent=title+'\n'+(list.map(x=>x).join('\n')||'(尚未新增)'); }
-function addToList(p){ if(!p) return; list.push(p); renderList(); if(document.getElementById('soundToggle').checked) beep(); }
-document.getElementById('title').value=nowTitle(); renderList();
-document.getElementById('btnNow').onclick=()=>{document.getElementById('title').value=nowTitle(); renderList();}
-document.getElementById('btnClear').onclick=()=>{ if(confirm('清空？')){ list=[]; renderList(); } }
-document.getElementById('btnCopyAll').onclick=async()=>{ await navigator.clipboard.writeText(listBox.textContent); alert('已複製整份清單'); };
-function dl(name,content,type='text/plain'){ const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([content],{type})); a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),500); }
-document.getElementById('btnTxt').onclick=()=>{ const t=(document.getElementById('title').value||'list'); dl(`${t}.txt`, listBox.textContent); }
-document.getElementById('btnCsv').onclick=()=>{ const t=(document.getElementById('title').value||'list'); const csv=['Plate',...list].join('\n'); dl(`${t}.csv`, csv,'text/csv'); }
-function beep(){ try{ const ctx=new (window.AudioContext||window.webkitAudioContext)(); const o=ctx.createOscillator(); const g=ctx.createGain(); o.type='sine'; o.frequency.value=900; g.gain.value=0.05; o.connect(g); g.connect(ctx.destination); o.start(); setTimeout(()=>{o.stop();ctx.close();},120);}catch(e){} }
-const inCamera=document.getElementById('inCamera'), inAlbum=document.getElementById('inAlbum'), inBatch=document.getElementById('inBatch');
-document.getElementById('btnCamera').onclick=()=>inCamera.click();
-document.getElementById('btnAlbum').onclick=()=>inAlbum.click();
-document.getElementById('btnBatch').onclick=()=>inBatch.click();
-
-const canvas=document.getElementById('canvas'), ctx=canvas.getContext('2d');
-const proc=document.getElementById('proc'), pctx=proc.getContext('2d');
-const bar=document.getElementById('bar'), bartxt=document.getElementById('bartxt');
-
-function initCanvas(){ canvas.width=Math.min(960,window.innerWidth-40); canvas.height=Math.round(canvas.width*0.6); const c=canvas.getContext('2d'); c.fillStyle='#f6f6f6'; c.fillRect(0,0,canvas.width,canvas.height); c.fillStyle='#777'; c.fillText('上載圖片 → 按「全自動尋牌」',12,20); proc.width=canvas.width; proc.height=Math.round(canvas.height*0.45); }
-initCanvas();
-
-let img=new Image();
-function loadFile(file){ const url=URL.createObjectURL(file); const im=new Image(); im.onload=()=>{ fitDraw(im); img=im; URL.revokeObjectURL(url);} ; im.src=url; }
-function fitDraw(im){ const maxW=Math.min(960, window.innerWidth-40); const s=Math.min(1, maxW/im.naturalWidth); const w=Math.round(im.naturalWidth*s), h=Math.round(im.naturalHeight*s); canvas.width=w; canvas.height=h; ctx.drawImage(im,0,0,w,h); }
-[inCamera,inAlbum].forEach(inp=>inp.addEventListener('change',e=>{ if(e.target.files[0]) loadFile(e.target.files[0]); }));
-
-function getCropCanvasFrom(source, rect){ const tmp=document.createElement('canvas'); tmp.width=rect.w; tmp.height=rect.h; const t=tmp.getContext('2d'); t.drawImage(source,rect.x,rect.y,rect.w,rect.h,0,0,rect.w,rect.h); return tmp; }
-function passesAspectRatio(r){ const ar=r.w/r.h; if(ar<2.5||ar>6.8) return false; if(r.w*r.h<9000) return false; return true; }
-function generateCandidates(source){ const W=source.naturalWidth, H=source.naturalHeight, cands=[]; const strong=document.getElementById('strongToggle').checked;
-  const hf = strong ? [0.12,0.16,0.20,0.24,0.28] : [0.16,0.20,0.24];
-  const arL = strong ? [3.5,4.0,4.5,5.0,5.5] : [4.0,4.5,5.0];
-  const rows = strong ? [0.30,0.36,0.42,0.48,0.54,0.60] : [0.40,0.50,0.60];
-  const cols = strong ? [0.30,0.40,0.50,0.60,0.70] : [0.50];
-  for(const h of hf){ for(const a of arL){ const hh=Math.round(H*h), ww=Math.round(hh*a); for(const cy of rows){ for(const cx of cols){ const y=Math.max(0,Math.min(H-hh,Math.round(H*cy-hh/2))); const x=Math.max(0,Math.min(W-ww,Math.round(W*cx-ww/2))); const r={x,y,w:ww,h:hh}; if(passesAspectRatio(r)) cands.push(r); } } } }
-  return cands;
-}
-function preprocess(cnv){ const out=document.createElement('canvas'); out.width=cnv.width*2; out.height=cnv.height*2; const o=out.getContext('2d'); o.imageSmoothingEnabled=true; o.drawImage(cnv,0,0,out.width,out.height);
-  let img=o.getImageData(0,0,out.width,out.height), d=img.data;
-  for(let i=0;i<d.length;i+=4){ const y=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2]; d[i]=d[i+1]=d[i+2]=y; }
-  const copy=new Uint8ClampedArray(d); const w=out.width,h=out.height; function px(a,x,y){return a[(y*w+x)*4];}
-  for(let y=1;y<h-1;y++){ for(let x=1;x<w-1;x++){ const vals=[px(copy,x-1,y-1),px(copy,x,y-1),px(copy,x+1,y-1),px(copy,x-1,y),px(copy,x,y),px(copy,x+1,y),px(copy,x-1,y+1),px(copy,x,y+1),px(copy,x+1,y+1)]; vals.sort((a,b)=>a-b); const m=vals[4]; const i=(y*w+x)*4; d[i]=d[i+1]=d[i+2]=m; } }
-  let sum=0; for(let i=0;i<d.length;i+=4) sum+=d[i]; const mean=sum/(d.length/4); const T=Math.max(105,Math.min(200,mean+8)); for(let i=0;i<d.length;i+=4){ const v=d[i]>T?255:0; d[i]=d[i+1]=d[i+2]=v; d[i+3]=255; } o.putImageData(img,0,0); return out; }
-function rotateCanvas(src,deg){ const rad=deg*Math.PI/180; const s=Math.abs(Math.sin(rad)), c=Math.abs(Math.cos(rad)); const w=src.width,h=src.height; const rw=Math.round(w*c+h*s), rh=Math.round(w*s+h*c); const out=document.createElement('canvas'); out.width=rw; out.height=rh; const ct=out.getContext('2d'); ct.translate(rw/2,rh/2); ct.rotate(rad); ct.drawImage(src,-w/2,-h/2); return out; }
-function strictExtract(raw){ const withSpace=document.getElementById('spaceToggle').checked; const up=(raw||'').toUpperCase().replace(/[^A-Z0-9]/g,''); const m=up.match(/[A-Z]{1,3}\d{1,4}/); if(!m) return ''; const plate=m[0]; return withSpace? plate.replace(/([A-Z]+)(\d+)/,'$1 $2'):plate; }
-
-const CDN = [
-  {worker:'https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/worker.min.js', core:'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.0.0/tesseract-core.wasm.js'},
-  {worker:'https://unpkg.com/tesseract.js@4.1.1/dist/worker.min.js', core:'https://unpkg.com/tesseract.js-core@5.0.0/tesseract-core.wasm.js'}
-];
-
-async function ocrOnce(cnv,hint){
-  let lastErr=null;
-  for(let i=0;i<CDN.length;i++){
-    const c=CDN[i];
-    bartxt.textContent = `載入 OCR（來源 ${i+1}/${CDN.length}）`; log(`嘗試載入 OCR 來源 ${i+1}: ${c.worker}`);
-    try{
-      const ctrl = new AbortController(); const t = setTimeout(()=>ctrl.abort(), 30000);
-      await fetch(c.core,{method:'HEAD',signal:ctrl.signal});
-      clearTimeout(t);
-      const {data} = await Tesseract.recognize(cnv,'eng',{
-        workerPath:c.worker, corePath:c.core, langPath:'https://tessdata.projectnaptha.com/4.0.0',
-        tessedit_char_whitelist:'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ', preserve_interword_spaces:'1', tessedit_pageseg_mode:'7',
-        logger:m=>{ if(m.progress){ const p=Math.max(10,Math.round(m.progress*100)); bar.style.width=p+'%'; bartxt.textContent=(m.status||hint)+' '+p+'%'; log(`${m.status||'progress'} ${p}%`);} }
-      });
-      return data;
-    }catch(e){ lastErr=e; log('來源失敗：'+(e.message||e)); }
-  }
-  throw lastErr||new Error('OCR 載入失敗');
-}
-
-async function recognizeSmart(cnv,hint){
-  const strong=document.getElementById('strongToggle').checked;
-  const angles = strong ? [-10,-8,-6,-4,-2,0,2,4,6,8,10] : [-6,-3,0,3,6];
-  let best=null, bestScore=-1;
-  for(const a of angles){
-    const rot=rotateCanvas(cnv,a);
-    for(const inv of [false,true]){
-      const prep=preprocess(rot);
-      if(inv){ const c=prep.getContext('2d'), im=c.getImageData(0,0,prep.width,prep.height), d=im.data; for(let i=0;i<d.length;i+=4){ d[i]=255-d[i]; d[i+1]=255-d[i+1]; d[i+2]=255-d[i+2]; } c.putImageData(im,0,0); }
-      try{
-        log(`開始 OCR（角度 ${a}°, 反色 ${inv}）`);
-        const data=await ocrOnce(prep,hint);
-        log('OCR 完成，confidence='+Math.round(data.confidence||0)+'，raw="'+(data.text||'').trim().slice(0,40)+'..."');
-        const plate=strictExtract(data.text||'');
-        const conf=data.confidence||0;
-        if(plate && conf>=50){ const score=conf; if(score>bestScore){ bestScore=score; best={plate,conf,canvas:prep,angle:a,inv}; } }
-      }catch(e){ log('OCR 出錯：'+(e.message||e)); }
-    }
-  }
-  return best;
-}
-
-async function recognizeCanvas(cnv,hint){
-  bartxt.textContent=hint+' 10%'; bar.style.width='10%'; log('開始辨識：'+hint);
-  try{
-    const got=await recognizeSmart(cnv,hint);
-    if(got){ bar.style.width='100%'; bartxt.textContent='完成 100%（信心 '+Math.round(got.conf)+'）'; return got; }
-    bartxt.textContent='未匹配香港格式或信心過低'; bar.style.width='0%'; return null;
-  }catch(e){ bartxt.textContent='錯誤：'+(e.message||e); log('致命錯誤：'+(e.message||e)); throw e; }
-}
-
-document.getElementById('autoFind').onclick=async ()=>{
-  if(!img.naturalWidth){ alert('請先上載圖片'); return; }
-  const cands=generateCandidates(img); log('候選框數量：'+cands.length);
-  let win=null, i=0;
-  for(const r of cands){ i++; const cut=getCropCanvasFrom(img,r); const got=await recognizeCanvas(cut,`候選 ${i}/${cands.length}`); if(got){ win=got; break; } }
-  if(win){ proc.width=win.canvas.width; proc.height=win.canvas.height; pctx.drawImage(win.canvas,0,0); document.getElementById('out').innerHTML='結果：<span style="color:#0a7b12">'+win.plate+'</span>'; addToList(win.plate); }
-  else document.getElementById('out').innerHTML='<span style="color:#b10000">未能自動找到（請改用手動框）</span>';
-};
-
-document.getElementById('enhance').onclick=async ()=>{
-  if(!img.naturalWidth){ alert('請先上載'); return; }
-  const H=img.naturalHeight, W=img.naturalWidth;
-  const hh=Math.round(H*0.22), ww=Math.round(hh*4.5), x=Math.max(0,Math.round(W*0.5-ww/2)), y=Math.max(0,Math.round(H*0.5-hh/2));
-  const cut=getCropCanvasFrom(img,{x,y,w:ww,h:hh});
-  const got=await recognizeCanvas(cut,'增強 OCR');
-  if(got){ proc.width=got.canvas.width; proc.height=got.canvas.height; pctx.drawImage(got.canvas,0,0); document.getElementById('out').innerHTML='結果：<span style="color:#0a7b12">'+got.plate+'</span>'; addToList(got.plate); }
-};
-
-document.getElementById('raw').onclick=async ()=>{
-  if(!img.naturalWidth){ alert('請先上載'); return; }
-  const got=await recognizeCanvas(canvas,'直接 OCR');
-  if(got){ proc.width=got.canvas.width; proc.height=got.canvas.height; pctx.drawImage(got.canvas,0,0); document.getElementById('out').innerHTML='結果：<span style="color:#0a7b12">'+got.plate+'</span>'; addToList(got.plate); }
-};
-
-document.getElementById('copy').onclick=async()=>{
-  const txt=document.getElementById('out').textContent.replace('結果：','').trim(); if(!txt){alert('沒有結果');return;} await navigator.clipboard.writeText(txt); alert('已複製'); };
-document.getElementById('reset').onclick=()=>{ initCanvas(); document.getElementById('out').textContent=''; bar.style.width='0%'; bartxt.textContent='就緒'; log('—— 重設 ——'); };
-
-// 批次
-const inBatchEl=document.getElementById('inBatch');
-const bbar=document.getElementById('bbar'), bbartxt=document.getElementById('bbartxt');
-document.getElementById('btnBatch').onclick=()=>inBatchEl.click();
-inBatchEl.addEventListener('change', async (e)=>{
-  const files=[...e.target.files]; if(!files.length) return; let ok=0, fail=0, idx=0;
-  log('批次開始：'+files.length+' 張');
-  for(const f of files){ idx++; const url=URL.createObjectURL(f); const im=await new Promise(res=>{ const ii=new Image(); ii.onload=()=>res(ii); ii.src=url; }); URL.revokeObjectURL(url);
-    const cands=generateCandidates(im); let win=null;
-    for(const r of cands){ const cut=getCropCanvasFrom(im,r); const got=await recognizeCanvas(cut,`批次 ${idx}/${files.length}`); if(got){ win=got; break; } }
-    if(win){ addToList(win.plate); ok++; } else fail++;
-    const p=Math.round(100*idx/files.length); bbar.style.width=p+'%'; bbartxt.textContent=`進度：${idx}/${files.length}（成功 ${ok}，失敗 ${fail}）`;
-  }
-  bbartxt.textContent=`批次完成（成功 ${ok}，失敗 ${fail}）`; bbar.style.width='100%'; log('批次完成：成功 '+ok+' 失敗 '+fail);
-});
-
-if ('serviceWorker' in navigator) { navigator.serviceWorker.register('./sw.js').catch(e=>log('SW 註冊失敗：'+e)); }
+function nowTitle(){const d=new Date();return `${pad(d.getDate())}/${pad(d.getMonth()+1)} ${pad(d.getHours())}${pad(d.getMinutes())}`;}
+const lotsKey='plateocr.lots';
+const defaultLots='牛頭角,新蒲崗,觀塘,葵芳,荃灣,旺角,油麻地,九龍灣,尖沙咀,中環,將軍澳';
+let lots=(localStorage.getItem(lotsKey)||defaultLots).split(',').map(s=>s.trim()).filter(Boolean);
+function setTitleWithLot(lot){document.getElementById('title').value=`${nowTitle()} ${lot}`;}
+function renderLots(){const box=document.getElementById('lotsBox');box.innerHTML='';lots.forEach(name=>{const b=document.createElement('button');b.textContent=name;b.onclick=()=>setTitleWithLot(name);box.appendChild(b);});document.getElementById('lotsEdit').value=lots.join(',');}
+document.getElementById('saveLots').onclick=()=>{lots=(document.getElementById('lotsEdit').value||'').split(',').map(s=>s.trim()).filter(Boolean);if(!lots.length)lots=defaultLots.split(',');localStorage.setItem(lotsKey,lots.join(','));renderLots();alert('已儲存車場清單');};
+document.getElementById('btnNow').onclick=()=>{document.getElementById('title').value=nowTitle();};
+renderLots();
 </script>
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/tesseract.min.js"></script>
 </body></html>
